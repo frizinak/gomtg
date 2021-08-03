@@ -3,6 +3,7 @@ package main
 import (
 	"errors"
 	"image"
+	"image/color"
 	"image/jpeg"
 	_ "image/jpeg"
 	_ "image/png"
@@ -12,6 +13,11 @@ import (
 	"sync"
 	"sync/atomic"
 
+	"golang.org/x/image/font"
+	"golang.org/x/image/font/gofont/gobold"
+	"golang.org/x/image/font/opentype"
+	"golang.org/x/image/math/f64"
+	"golang.org/x/image/math/fixed"
 	_ "golang.org/x/image/webp"
 
 	"golang.org/x/image/draw"
@@ -74,6 +80,7 @@ func genImages(cards []mtgjson.Card, file string, progress func(n, total int)) e
 				if err != nil {
 					gerr = err
 				}
+
 				atomic.AddUint32(&dled, 1)
 				progress(int(dled), int(total))
 				results <- result{ix: j.ix, Image: img}
@@ -103,6 +110,7 @@ func genImages(cards []mtgjson.Card, file string, progress func(n, total int)) e
 		return gerr
 	}
 
+	narrowest := -1
 	canvasH, canvasW := 0, 0
 	widths := make([]int, cols)
 	for y := 0; y < rows; y++ {
@@ -120,6 +128,9 @@ func genImages(cards []mtgjson.Card, file string, progress func(n, total int)) e
 			if widths[x] < w {
 				widths[x] = w
 			}
+			if narrowest < 0 || w < narrowest {
+				narrowest = w
+			}
 		}
 		canvasH += maxHeight
 	}
@@ -128,6 +139,38 @@ func genImages(cards []mtgjson.Card, file string, progress func(n, total int)) e
 	}
 
 	canvas := image.NewNRGBA(image.Rect(0, 0, canvasW, canvasH))
+
+	fontSrc := image.NewUniform(color.NRGBA{60, 0, 0, 255})
+	fontBGSrc := image.NewUniform(color.NRGBA{204, 204, 204, 180})
+	//face := basicfont.Face7x13
+	fontScale := 1.0
+
+	col, err := opentype.ParseCollection(gobold.TTF)
+	if err != nil {
+		return err
+	}
+	gofont, err := col.Font(0)
+	if err != nil {
+		return err
+	}
+
+	face, err := opentype.NewFace(gofont, &opentype.FaceOptions{
+		Size:    math.Max(10, float64(narrowest)/36*1.5),
+		DPI:     72,
+		Hinting: font.HintingNone,
+	})
+	if err != nil {
+		return err
+	}
+
+	fontLayer := canvas
+	if fontScale != 1 {
+		fontLayer = image.NewNRGBA(image.Rect(
+			0, 0,
+			int(float64(canvasW)/fontScale), int(float64(canvasH)/fontScale),
+		))
+	}
+
 	offset := image.Point{}
 	for y := 0; y < rows; y++ {
 		maxHeight := 0
@@ -139,6 +182,30 @@ func genImages(cards []mtgjson.Card, file string, progress func(n, total int)) e
 			dst := imgs[ix].Bounds()
 			draw.Draw(canvas, dst.Add(offset), imgs[ix], image.Point{}, draw.Src)
 
+			dwr := font.Drawer{
+				Dst:  fontLayer,
+				Src:  fontSrc,
+				Face: face,
+			}
+			str := string(cards[ix].UUID)
+			txtBounds, _ := dwr.BoundString(str)
+			width := float64((txtBounds.Max.X - txtBounds.Min.X).Round())
+
+			dwr.Dot = fixed.P(
+				int(float64(offset.X+dst.Dx()/2)/fontScale-width/2),
+				int(float64(offset.Y+20)/fontScale),
+			)
+
+			txtBounds, _ = dwr.BoundString(str)
+			txtDst := image.Rect(
+				txtBounds.Min.X.Floor()-10,
+				txtBounds.Min.Y.Floor()-4,
+				txtBounds.Max.X.Ceil()+10,
+				txtBounds.Max.Y.Ceil()+4,
+			)
+			draw.Draw(fontLayer, txtDst, fontBGSrc, image.Point{}, draw.Over)
+			dwr.DrawString(str)
+
 			offset.X += dst.Dx()
 			h := dst.Dy()
 			if h > maxHeight {
@@ -147,6 +214,20 @@ func genImages(cards []mtgjson.Card, file string, progress func(n, total int)) e
 		}
 		offset.X = 0
 		offset.Y += maxHeight
+	}
+
+	if fontScale != 1 {
+		draw.NearestNeighbor.Transform(
+			canvas,
+			f64.Aff3{
+				fontScale, 0, 0,
+				0, fontScale, 0,
+			},
+			fontLayer,
+			fontLayer.Bounds(),
+			draw.Over,
+			nil,
+		)
 	}
 
 	f, err := os.Create(file)
