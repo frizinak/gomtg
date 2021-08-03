@@ -52,6 +52,10 @@ func spawnViewer(cmd string, autoReload bool, path string) error {
 
 	killViewer()
 	imageViewerProcess = exec.Command(parts[0], parts[1:]...)
+
+	// prevent process from being killed by ctrl-c in controlling terminal
+	imageViewerProcess.SysProcAttr = sysProcAddr()
+
 	err = imageViewerProcess.Start()
 	if err != nil {
 		imageViewerProcess = nil
