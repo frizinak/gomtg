@@ -96,9 +96,9 @@ func (m Mode) ValidInput() bool {
 
 const (
 	ModeAdd    Mode = "add"
-	ModeSel         = "sel"
-	ModeCol         = "col"
-	ModeSearch      = "search"
+	ModeSel    Mode = "sel"
+	ModeCol    Mode = "col"
+	ModeSearch Mode = "search"
 )
 
 var AllInputModes = []Mode{
