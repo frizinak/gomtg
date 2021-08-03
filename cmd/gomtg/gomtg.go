@@ -5,6 +5,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"image"
 	"io"
 	"os"
 	"os/signal"
@@ -79,6 +80,7 @@ func uniqUUIDPart(list []string) [][3]string {
 				wasAlpha[k] = alpha
 				ret[k] = i
 			}
+			break
 		}
 	}
 
@@ -171,9 +173,20 @@ func cardListID(c []mtgjson.Card) string {
 }
 
 func main() {
+	cacheDir, err := os.UserCacheDir()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "failed to get your cache directory: %s\n", err)
+		os.Exit(0)
+	}
+	dir := filepath.Join(cacheDir, "gomtg")
+	dest := filepath.Join(dir, "v5-all-printings.gob")
+	imagePath := filepath.Join(dir, "options.jpg")
+	imageDir := filepath.Join(dir, "images")
 	var skipIntro bool
 	var imageCommand string
 	var imageAutoReload bool
+	var imageRefreshCommand string
+	var imageNoCache bool
 	var dbFile string
 	colors := Colors{
 		"bad":    {0, 2, 1},
@@ -190,10 +203,11 @@ func main() {
 		&imageCommand,
 		"i",
 		"",
-		`Command to run to view images. {} will be replaced by the filename.
-if no {} argument is found, it will be appended to the command.
-e.g.: -i "chromium 'file://{}'",
-e.g.: -i "imv" -ia`,
+		`Command to run to view images. {fn} will be replaced by the filename.
+if no {fn} argument is found, it will be appended to the command.
+e.g.: -i "chromium 'file://{fn}'",
+e.g.: -i 'imv' -ia,
+e.g.: -i 'imv' -ir '/bin/sh -c "imv-msg {pid} close all; imv-msg {pid} open {fn}"'`,
 	)
 	flag.BoolVar(
 		&imageAutoReload,
@@ -202,10 +216,31 @@ e.g.: -i "imv" -ia`,
 		`Your image viewer wont be killed and respawned each time you view an image.
 Only useful if your viewer auto reloads updated images (imv and feh for example)`,
 	)
+	flag.StringVar(
+		&imageRefreshCommand,
+		"ir",
+		"",
+		`command run each time the image should be refreshed.
+ignored if -ia is passed. {fn} is replaced by the filename and {pid} with the process id.`,
+	)
+	flag.BoolVar(&imageNoCache, "no-cache", false, fmt.Sprintf("disable image caching (in '%s')", imageDir))
 	flag.StringVar(&dbFile, "db", "gomtg.db", "Database file to use")
 	flag.StringVar(&colorStr, "c", colorStr, "change default colors (key:bg:fg:bold[,key:value...])")
 	flag.BoolVar(&testColors, "color-test", testColors, "test colors")
 	flag.Parse()
+
+	_ = os.MkdirAll(dir, 0700)
+	_ = os.MkdirAll(filepath.Dir(dbFile), 0700)
+	_ = os.MkdirAll(imageDir, 0700)
+
+	imageGetter := func(url string) (image.Image, error) {
+		return getImageCached(url, imageDir)
+	}
+	if imageNoCache {
+		imageGetter = func(url string) (image.Image, error) {
+			return getImage(url)
+		}
+	}
 
 	lockFile, err := filepath.Abs(dbFile + ".lock")
 	if err != nil {
@@ -292,13 +327,6 @@ Only useful if your viewer auto reloads updated images (imv and feh for example)
 		}
 		return nil
 	}))
-
-	cacheDir, err := os.UserCacheDir()
-	exit(err)
-
-	dir := filepath.Join(cacheDir, "gomtg")
-	dest := filepath.Join(dir, "v5-all-printings.gob")
-	imagePath := filepath.Join(dir, "options.jpg")
 
 	var db *DB
 	var localFuzz *fuzzy.Index
@@ -478,9 +506,9 @@ Only useful if your viewer auto reloads updated images (imv and feh for example)
 			listID := cardListID(state.Options)
 			if lastImageListID == listID {
 				printOptions()
-				return nil
+				return spawnViewer(imageCommand, imageRefreshCommand, imageAutoReload, imagePath)
 			}
-			err := genImages(state.Options, imagePath, func(i, total int) {
+			err := genImages(state.Options, imagePath, imageGetter, func(i, total int) {
 				print(fmt.Sprintf("Downloaded %02d/%02d", i, total))
 				flush()
 			})
@@ -490,7 +518,7 @@ Only useful if your viewer auto reloads updated images (imv and feh for example)
 			lastImageListID = listID
 			printOptions()
 			printAlert(fmt.Sprintf("Downloaded image to '%s'", imagePath))
-			return spawnViewer(imageCommand, imageAutoReload, imagePath)
+			return spawnViewer(imageCommand, imageRefreshCommand, imageAutoReload, imagePath)
 		},
 		"image": func(a []string) error {
 			if len(a) != 1 || len(a[0]) == 0 {
@@ -534,7 +562,7 @@ Only useful if your viewer auto reloads updated images (imv and feh for example)
 
 			listID := cardListID(list)
 			if lastImageListID != listID {
-				err := genImages(list, imagePath, func(n, total int) {})
+				err := genImages(list, imagePath, imageGetter, func(n, total int) {})
 				if err != nil {
 					return err
 				}
@@ -543,7 +571,7 @@ Only useful if your viewer auto reloads updated images (imv and feh for example)
 
 			printOptions()
 			printAlert(fmt.Sprintf("Downloaded image to '%s'", imagePath))
-			return spawnViewer(imageCommand, imageAutoReload, imagePath)
+			return spawnViewer(imageCommand, imageRefreshCommand, imageAutoReload, imagePath)
 		},
 		"mode": func(args []string) error {
 			arg := ""

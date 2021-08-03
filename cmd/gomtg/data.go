@@ -3,7 +3,6 @@ package main
 import (
 	"fmt"
 	"os"
-	"path/filepath"
 
 	"github.com/frizinak/gomtg/mtgjson"
 )
@@ -12,8 +11,6 @@ func loadData(file string) (mtgjson.AllPrintings, error) {
 	if _, err := os.Stat(file); err != nil {
 		destJSON := file + ".json"
 		err := progress("Download mgtjson.com data", func() error {
-			dir := filepath.Dir(file)
-			os.MkdirAll(dir, 0700)
 			w, err := os.Create(destJSON)
 			if err != nil {
 				return err

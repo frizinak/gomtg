@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"path/filepath"
 
 	"github.com/frizinak/gomtg/mtgjson"
 )
@@ -67,7 +66,6 @@ func (db *DB) Save(file string) error {
 	}
 
 	tmp := file + ".tmp"
-	os.MkdirAll(filepath.Dir(file), 0700)
 	f, err := os.Create(tmp)
 	if err != nil {
 		return err

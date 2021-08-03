@@ -1,17 +1,27 @@
 package main
 
 import (
+	"context"
+	"crypto/rand"
+	"crypto/sha256"
+	"encoding/base64"
+	"encoding/hex"
 	"errors"
+	"fmt"
 	"image"
 	"image/color"
 	"image/jpeg"
 	_ "image/jpeg"
 	_ "image/png"
+	"io"
 	"math"
 	"net/http"
 	"os"
+	"path/filepath"
+	"strconv"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"golang.org/x/image/font"
 	"golang.org/x/image/font/gofont/gobold"
@@ -25,14 +35,98 @@ import (
 	"github.com/frizinak/gomtg/mtgjson"
 )
 
-func getImage(url string) (image.Image, error) {
-	res, err := http.Get(url)
+func tmpFile(file string) string {
+	stamp := strconv.FormatInt(time.Now().UnixNano(), 36)
+	rnd := make([]byte, 32)
+	_, err := io.ReadFull(rand.Reader, rnd)
 	if err != nil {
-		return nil, err
+		panic(err)
+	}
+
+	return fmt.Sprintf(
+		"%s.%s-%s.tmp",
+		file,
+		stamp,
+		base64.RawURLEncoding.EncodeToString(rnd),
+	)
+}
+
+func getImage(url string) (image.Image, error) {
+	r, w := io.Pipe()
+	var werr error
+	go func() {
+		if err := downloadImage(url, w); err != nil {
+			werr = err
+			w.Close()
+		}
+	}()
+	img, _, err := image.Decode(r)
+	if err != nil {
+		return img, err
+	}
+	return img, werr
+}
+
+func downloadImage(url string, w ...io.Writer) error {
+	dl := time.Now().Add(time.Second * 10)
+	ctx, cancel := context.WithDeadline(context.Background(), dl)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
+	if err != nil {
+		return err
+	}
+	res, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return err
 	}
 	defer res.Body.Close()
-	img, _, err := image.Decode(res.Body)
-	return img, err
+	_, err = io.Copy(io.MultiWriter(w...), res.Body)
+	return err
+}
+
+func getImageCached(url string, dir string) (image.Image, error) {
+	s := sha256.Sum256([]byte(url))
+	h := hex.EncodeToString(s[:])
+	path := filepath.Join(dir, h+".jpg")
+	f, err := os.Open(path)
+	if err == nil {
+		defer f.Close()
+		img, _, err := image.Decode(f)
+		return img, err
+	}
+
+	if os.IsNotExist(err) {
+		tmp := tmpFile(path)
+		f, err = os.Create(tmp)
+		if err != nil {
+			return nil, err
+		}
+		pr, pw := io.Pipe()
+		var gerr error
+		done := make(chan struct{}, 1)
+		go func() {
+			err := downloadImage(url, f, pw)
+			pw.Close()
+			if err != nil {
+				gerr = err
+				os.Remove(tmp)
+				return
+			}
+			gerr = os.Rename(tmp, path)
+			if gerr != nil {
+				os.Remove(tmp)
+			}
+			done <- struct{}{}
+		}()
+		img, _, err := image.Decode(pr)
+		if err != nil {
+			return nil, err
+		}
+		<-done
+		return img, gerr
+	}
+
+	return nil, err
 }
 
 func addUUIDsToCollage(cols, rows int, canvas *image.NRGBA, cards []mtgjson.Card, imgs []image.Rectangle) error {
@@ -190,7 +284,9 @@ func genCollage(cols, rows int, imgs []image.Image) (*image.NRGBA, []image.Recta
 	return canvas, rects, nil
 }
 
-func genImages(cards []mtgjson.Card, file string, progress func(n, total int)) error {
+type ImageGetter func(url string) (image.Image, error)
+
+func genImages(cards []mtgjson.Card, file string, getImage ImageGetter, progress func(n, total int)) error {
 	if len(cards) == 0 {
 		return errors.New("no cards to fetch images for")
 	}

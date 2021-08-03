@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"os/exec"
+	"strconv"
 	"strings"
 	"sync"
 
@@ -13,9 +14,10 @@ var (
 	imageViewerProcess *exec.Cmd
 	imageViewerMutex   sync.Mutex
 	imageViewerRunning bool
+	imageViewerPID     int
 )
 
-func spawnViewer(cmd string, autoReload bool, path string) error {
+func spawnViewer(cmd, refreshCmd string, autoReload bool, path string) error {
 	if cmd == "" {
 		return nil
 	}
@@ -32,6 +34,28 @@ func spawnViewer(cmd string, autoReload bool, path string) error {
 		imageViewerProcess = nil
 	}
 
+	var refresh *exec.Cmd
+	if !autoReload {
+		parts, err := shlex.Split(refreshCmd)
+		if err != nil {
+			return fmt.Errorf("%w: Invalid image viewer refresh command: %s", err, refreshCmd)
+		}
+
+		imageViewerMutex.Lock()
+		running := imageViewerRunning
+		pid := imageViewerPID
+		imageViewerMutex.Unlock()
+		if running {
+			for i, arg := range parts {
+				arg = strings.ReplaceAll(arg, "{pid}", strconv.Itoa(pid))
+				arg = strings.ReplaceAll(arg, "{fn}", path)
+				parts[i] = arg
+			}
+			refresh = exec.Command(parts[0], parts[1:]...)
+			return refresh.Run()
+		}
+	}
+
 	parts, err := shlex.Split(cmd)
 	if err != nil {
 		return fmt.Errorf("%w: Invalid image viewer command: %s", err, cmd)
@@ -39,11 +63,10 @@ func spawnViewer(cmd string, autoReload bool, path string) error {
 
 	repl := false
 	for i, arg := range parts {
-		if !strings.Contains(arg, "{}") {
-			continue
+		if strings.Contains(arg, "{fn}") {
+			repl = true
+			parts[i] = strings.ReplaceAll(arg, "{fn}", path)
 		}
-		repl = true
-		parts[i] = strings.ReplaceAll(arg, "{}", path)
 	}
 
 	if !repl {
@@ -62,6 +85,10 @@ func spawnViewer(cmd string, autoReload bool, path string) error {
 	}
 	imageViewerMutex.Lock()
 	imageViewerRunning = true
+	imageViewerPID = 0
+	if imageViewerProcess.Process != nil {
+		imageViewerPID = imageViewerProcess.Process.Pid
+	}
 	imageViewerMutex.Unlock()
 
 	go func() {
