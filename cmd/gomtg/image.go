@@ -376,7 +376,12 @@ func genImages(cards []mtgjson.Card, file string, getImage ImageGetter, progress
 	if err != nil {
 		return err
 	}
-	defer f.Close()
 
-	return jpeg.Encode(f, canvas, &jpeg.Options{Quality: 80})
+	err = jpeg.Encode(f, canvas, &jpeg.Options{Quality: 80})
+	_ = f.Close()
+	if err != nil {
+		return err
+	}
+	_ = f.Sync()
+	return nil
 }
