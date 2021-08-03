@@ -87,6 +87,7 @@ Only useful if your viewer auto reloads updated images (imv and feh for example)
 	cancelCh := make(chan struct{}, 1)
 	signal.Notify(
 		sigCh,
+		os.Interrupt,
 		syscall.SIGHUP,
 		syscall.SIGINT,
 		syscall.SIGTERM,
@@ -111,8 +112,7 @@ Only useful if your viewer auto reloads updated images (imv and feh for example)
 	}
 
 	go func() {
-		for {
-			s := <-sigCh
+		for s := range sigCh {
 			if s == syscall.SIGINT {
 				go func() { cancelCh <- struct{}{} }()
 				continue
