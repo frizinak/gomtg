@@ -35,6 +35,161 @@ func getImage(url string) (image.Image, error) {
 	return img, err
 }
 
+func addUUIDsToCollage(cols, rows int, canvas *image.NRGBA, cards []mtgjson.Card, imgs []image.Rectangle) error {
+	fontLSrc := image.NewUniform(color.NRGBA{30, 0, 0, 180})
+	fontHSrc := image.NewUniform(color.NRGBA{200, 0, 0, 255})
+	fontBGSrc := image.NewUniform(color.NRGBA{204, 204, 204, 180})
+	//face := basicfont.Face7x13
+	fontScale := 1.0
+
+	col, err := opentype.ParseCollection(gobold.TTF)
+	if err != nil {
+		return err
+	}
+	gofont, err := col.Font(0)
+	if err != nil {
+		return err
+	}
+
+	narrowest := -1
+	for _, i := range imgs {
+		w := i.Bounds().Dx()
+		if narrowest < 0 || w < narrowest {
+			narrowest = w
+		}
+	}
+
+	b := canvas.Bounds()
+	canvasW, canvasH := b.Dx(), b.Dy()
+
+	face, err := opentype.NewFace(gofont, &opentype.FaceOptions{
+		Size:    math.Max(10, float64(narrowest)/36*1.5),
+		DPI:     72,
+		Hinting: font.HintingNone,
+	})
+	if err != nil {
+		return err
+	}
+
+	fontLayer := canvas
+	if fontScale != 1 {
+		fontLayer = image.NewNRGBA(image.Rect(
+			0, 0,
+			int(float64(canvasW)/fontScale), int(float64(canvasH)/fontScale),
+		))
+	}
+
+	strs := make([]string, len(cards))
+	for i, c := range cards {
+		strs[i] = string(c.UUID)
+	}
+
+	uniq := uniqUUIDPart(strs)
+	dwr := font.Drawer{
+		Dst:  fontLayer,
+		Src:  fontLSrc,
+		Face: face,
+	}
+	for ix, dst := range imgs {
+		str := string(cards[ix].UUID)
+		dwr.Dot = fixed.P(0, 0)
+		txtBounds, _ := dwr.BoundString(str)
+		width := float64((txtBounds.Max.X - txtBounds.Min.X).Round())
+
+		pt := image.Pt(
+			int(float64(dst.Min.X+dst.Dx()/2)/fontScale-width/2),
+			int(float64(dst.Min.Y+20)/fontScale),
+		)
+		dwr.Dot = fixed.P(pt.X, pt.Y)
+
+		box := image.Rect(
+			txtBounds.Min.X.Floor()-10,
+			txtBounds.Min.Y.Floor()-4,
+			txtBounds.Max.X.Ceil()+10,
+			txtBounds.Max.Y.Ceil()+4,
+		).Add(pt)
+		draw.Draw(fontLayer, box, fontBGSrc, image.Point{}, draw.Over)
+
+		dwr.DrawString(uniq[ix][0])
+		dwr.Src = fontHSrc
+		dwr.DrawString(uniq[ix][1])
+		dwr.Src = fontLSrc
+		dwr.DrawString(uniq[ix][2])
+
+	}
+
+	if fontScale != 1 {
+		draw.NearestNeighbor.Transform(
+			canvas,
+			f64.Aff3{
+				fontScale, 0, 0,
+				0, fontScale, 0,
+			},
+			fontLayer,
+			fontLayer.Bounds(),
+			draw.Over,
+			nil,
+		)
+	}
+
+	return nil
+}
+
+func genCollage(cols, rows int, imgs []image.Image) (*image.NRGBA, []image.Rectangle, error) {
+	canvasH, canvasW := 0, 0
+	widths := make([]int, cols)
+	for y := 0; y < rows; y++ {
+		maxHeight := 0
+		for x := 0; x < cols; x++ {
+			ix := y*cols + x
+			if ix >= len(imgs) {
+				break
+			}
+			b := imgs[ix].Bounds()
+			w, h := b.Dx(), b.Dy()
+			if h > maxHeight {
+				maxHeight = h
+			}
+			if widths[x] < w {
+				widths[x] = w
+			}
+		}
+		canvasH += maxHeight
+	}
+	for _, w := range widths {
+		canvasW += w
+	}
+
+	canvas := image.NewNRGBA(image.Rect(0, 0, canvasW, canvasH))
+
+	offset := image.Point{}
+	rects := make([]image.Rectangle, len(imgs))
+	for y := 0; y < rows; y++ {
+		maxHeight := 0
+		for x := 0; x < cols; x++ {
+			ix := y*cols + x
+			if ix >= len(imgs) {
+				break
+			}
+			dst := imgs[ix].Bounds()
+			dst = dst.Add(offset)
+
+			draw.Draw(canvas, dst, imgs[ix], image.Point{}, draw.Src)
+			rects[ix] = dst
+
+			offset.X += dst.Dx()
+			h := dst.Dy()
+			if h > maxHeight {
+				maxHeight = h
+			}
+		}
+		offset.X = 0
+		offset.Y += maxHeight
+	}
+
+	return canvas, rects, nil
+}
+
 func genImages(cards []mtgjson.Card, file string, progress func(n, total int)) error {
 	if len(cards) == 0 {
 		return errors.New("no cards to fetch images for")
@@ -110,124 +265,13 @@ func genImages(cards []mtgjson.Card, file string, progress func(n, total int)) e
 		return gerr
 	}
 
-	narrowest := -1
-	canvasH, canvasW := 0, 0
-	widths := make([]int, cols)
-	for y := 0; y < rows; y++ {
-		maxHeight := 0
-		for x := 0; x < cols; x++ {
-			ix := y*cols + x
-			if ix >= len(imgs) {
-				break
-			}
-			b := imgs[ix].Bounds()
-			w, h := b.Dx(), b.Dy()
-			if h > maxHeight {
-				maxHeight = h
-			}
-			if widths[x] < w {
-				widths[x] = w
-			}
-			if narrowest < 0 || w < narrowest {
-				narrowest = w
-			}
-		}
-		canvasH += maxHeight
-	}
-	for _, w := range widths {
-		canvasW += w
-	}
-
-	canvas := image.NewNRGBA(image.Rect(0, 0, canvasW, canvasH))
-
-	fontSrc := image.NewUniform(color.NRGBA{60, 0, 0, 255})
-	fontBGSrc := image.NewUniform(color.NRGBA{204, 204, 204, 180})
-	//face := basicfont.Face7x13
-	fontScale := 1.0
-
-	col, err := opentype.ParseCollection(gobold.TTF)
-	if err != nil {
-		return err
-	}
-	gofont, err := col.Font(0)
+	canvas, rects, err := genCollage(cols, rows, imgs)
 	if err != nil {
 		return err
 	}
 
-	face, err := opentype.NewFace(gofont, &opentype.FaceOptions{
-		Size:    math.Max(10, float64(narrowest)/36*1.5),
-		DPI:     72,
-		Hinting: font.HintingNone,
-	})
-	if err != nil {
+	if err := addUUIDsToCollage(cols, rows, canvas, cards, rects); err != nil {
 		return err
-	}
-
-	fontLayer := canvas
-	if fontScale != 1 {
-		fontLayer = image.NewNRGBA(image.Rect(
-			0, 0,
-			int(float64(canvasW)/fontScale), int(float64(canvasH)/fontScale),
-		))
-	}
-
-	offset := image.Point{}
-	for y := 0; y < rows; y++ {
-		maxHeight := 0
-		for x := 0; x < cols; x++ {
-			ix := y*cols + x
-			if ix >= len(imgs) {
-				break
-			}
-			dst := imgs[ix].Bounds()
-			draw.Draw(canvas, dst.Add(offset), imgs[ix], image.Point{}, draw.Src)
-
-			dwr := font.Drawer{
-				Dst:  fontLayer,
-				Src:  fontSrc,
-				Face: face,
-			}
-			str := string(cards[ix].UUID)
-			txtBounds, _ := dwr.BoundString(str)
-			width := float64((txtBounds.Max.X - txtBounds.Min.X).Round())
-
-			dwr.Dot = fixed.P(
-				int(float64(offset.X+dst.Dx()/2)/fontScale-width/2),
-				int(float64(offset.Y+20)/fontScale),
-			)
-
-			txtBounds, _ = dwr.BoundString(str)
-			txtDst := image.Rect(
-				txtBounds.Min.X.Floor()-10,
-				txtBounds.Min.Y.Floor()-4,
-				txtBounds.Max.X.Ceil()+10,
-				txtBounds.Max.Y.Ceil()+4,
-			)
-			draw.Draw(fontLayer, txtDst, fontBGSrc, image.Point{}, draw.Over)
-			dwr.DrawString(str)
-
-			offset.X += dst.Dx()
-			h := dst.Dy()
-			if h > maxHeight {
-				maxHeight = h
-			}
-		}
-		offset.X = 0
-		offset.Y += maxHeight
-	}
-
-	if fontScale != 1 {
-		draw.NearestNeighbor.Transform(
-			canvas,
-			f64.Aff3{
-				fontScale, 0, 0,
-				0, fontScale, 0,
-			},
-			fontLayer,
-			fontLayer.Bounds(),
-			draw.Over,
-			nil,
-		)
 	}
 
 	f, err := os.Create(file)

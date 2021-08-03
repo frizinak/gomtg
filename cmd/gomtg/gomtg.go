@@ -30,12 +30,16 @@ func progress(msg string, cb func() error) error {
 	return nil
 }
 
-func uniqUUIDPart(list []string) []string {
+func uniqUUIDPart(list []string) [][3]string {
 	if len(list) > 1000 {
-		return list
+		data := make([][3]string, len(list))
+		for i := range list {
+			data[i][1] = list[i]
+		}
+		return data
 	}
 
-	data := make(map[string]map[int]struct{})
+	data := make(map[string]map[int]struct{}, len(list))
 	for i, item := range list {
 		for ln := 1; ln <= len(item); ln++ {
 			for n := 0; n <= len(item)-ln; n++ {
@@ -77,14 +81,20 @@ func uniqUUIDPart(list []string) []string {
 			}
 		}
 	}
+
+	d := make([][3]string, len(list))
 	for i := range ret {
 		if ret[i] == "" {
-			ret[i] = list[i]
+			d[i][1] = list[i]
+			continue
 		}
-
+		ix := strings.Index(list[i], ret[i])
+		d[i][0] = list[i][0:ix]
+		d[i][1] = list[i][ix : ix+len(ret[i])]
+		d[i][2] = list[i][ix+len(ret[i]):]
 	}
 
-	return ret
+	return d
 }
 
 func colorUniqUUID(uuids []string, colors Colors) []string {
@@ -92,16 +102,16 @@ func colorUniqUUID(uuids []string, colors Colors) []string {
 	ret := make([]string, len(uuids))
 	clrH := colors.Get("high")
 	clrL := colors.Get("low")
-	for i := range uuids {
-		if len(uuids[i]) == len(list[i]) {
-			ret[i] = " " + uuids[i] + " "
-			continue
-		}
-		ix := strings.Index(uuids[i], list[i])
-		pre := uuids[i][0:ix]
-		sub := uuids[i][ix : ix+len(list[i])]
-		suf := uuids[i][ix+len(list[i]):]
-		ret[i] = fmt.Sprintf("%s%s\033[0m%s %s \033[0m%s%s\033[0m", clrL, pre, clrH, sub, clrL, suf)
+	for i := range list {
+		ret[i] = fmt.Sprintf(
+			"%s%s\033[0m%s %s \033[0m%s%s\033[0m",
+			clrL,
+			list[i][0],
+			clrH,
+			list[i][1],
+			clrL,
+			list[i][2],
+		)
 	}
 
 	return ret
@@ -700,9 +710,6 @@ Fuzzy db seems out of sync with your collection db try committing a restarting.`
 				return s
 			})
 			printOptions()
-			return
-
-			printErr(errors.New("too many results, try a more specific query"))
 			return
 
 		case ModeSearch:
