@@ -2,7 +2,6 @@ package main
 
 import (
 	"encoding/json"
-	"fmt"
 	"os"
 
 	"github.com/frizinak/gomtg/mtgjson"
@@ -22,16 +21,6 @@ func FromCard(c mtgjson.Card) *Card {
 		Name:  c.Name,
 		Tags:  make([]string, 0),
 	}
-}
-
-func (c *Card) Card(list []mtgjson.Card) (mtgjson.Card, error) {
-	for _, crd := range list {
-		if c.UUID == crd.UUID {
-			return crd, nil
-		}
-	}
-
-	return mtgjson.Card{}, fmt.Errorf("card with UUID %s not found", c.UUID)
 }
 
 type DB struct {

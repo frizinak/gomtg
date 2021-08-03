@@ -205,7 +205,9 @@ func addUUIDsToCollage(cols, rows int, canvas *image.NRGBA, cards []mtgjson.Card
 		draw.Draw(fontLayer, box, fontBGSrc, image.Point{}, draw.Over)
 
 		dwr.DrawString(uniq[ix][0])
-		dwr.Src = fontHSrc
+		if len(uniq) != 1 {
+			dwr.Src = fontHSrc
+		}
 		dwr.DrawString(uniq[ix][1])
 		dwr.Src = fontLSrc
 		dwr.DrawString(uniq[ix][2])

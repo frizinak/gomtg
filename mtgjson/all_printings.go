@@ -201,3 +201,12 @@ func (p AllPrintings) Cards() []Card {
 	}
 	return n
 }
+
+func ByUUID(cards []Card) map[UUID]int {
+	n := make(map[UUID]int, len(cards))
+	for i, c := range cards {
+		n[c.UUID] = i
+	}
+
+	return n
+}

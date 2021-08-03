@@ -32,7 +32,7 @@ func progress(msg string, cb func() error) error {
 }
 
 func uniqUUIDPart(list []string) [][3]string {
-	if len(list) > 1000 {
+	if len(list) > 10000 {
 		data := make([][3]string, len(list))
 		for i := range list {
 			data[i][1] = list[i]
@@ -59,8 +59,25 @@ func uniqUUIDPart(list []string) [][3]string {
 	ret := make([]string, len(list))
 	wasAlpha := make([]bool, len(list))
 	for i, s := range data {
-		if len(s) != 1 {
+		if len(s) == 0 {
 			continue
+		}
+
+		if len(s) != 1 {
+			value := ""
+			identical := true
+			for ix := range s {
+				if value == "" {
+					value = list[ix]
+				}
+				if list[ix] != value {
+					identical = false
+					break
+				}
+			}
+			if !identical {
+				continue
+			}
 		}
 
 		for k := range s {
@@ -80,7 +97,6 @@ func uniqUUIDPart(list []string) [][3]string {
 				wasAlpha[k] = alpha
 				ret[k] = i
 			}
-			break
 		}
 	}
 
@@ -353,9 +369,11 @@ ignored if -ia is passed. {fn} is replaced by the filename and {pid} with the pr
 	exit(err)
 
 	var cards []mtgjson.Card
+	var byUUID map[mtgjson.UUID]int
 	exit(progress("Filter paper cards", func() error {
 		data = data.FilterOnlineOnly(false)
 		cards = data.Cards()
+		byUUID = mtgjson.ByUUID(cards)
 		return nil
 	}))
 
@@ -435,6 +453,21 @@ ignored if -ia is passed. {fn} is replaced by the filename and {pid} with the pr
 		}
 	}
 
+	cardByUUID := func(uuid mtgjson.UUID) (card mtgjson.Card, ok bool) {
+		var ix int
+		ix, ok = byUUID[uuid]
+		if !ok {
+			return
+		}
+		if ix < 0 || ix >= len(cards) {
+			ok = false
+			return
+		}
+
+		card = cards[ix]
+		return
+	}
+
 	_commandQ := func([]string) error {
 		if len(queue) == 1 {
 			print("Queue is empty")
@@ -503,6 +536,9 @@ ignored if -ia is passed. {fn} is replaced by the filename and {pid} with the pr
 			return nil
 		},
 		"images": func([]string) error {
+			if len(state.Options) > 100 {
+				return errors.New("too many cards to generate an image of")
+			}
 			listID := cardListID(state.Options)
 			if lastImageListID == listID {
 				printOptions()
@@ -535,8 +571,23 @@ ignored if -ia is passed. {fn} is replaced by the filename and {pid} with the pr
 					return nil
 				}
 
+				identical := true
+				var value mtgjson.UUID
+				for _, c := range list {
+					if value == "" {
+						value = c.UUID
+					}
+					if c.UUID != value {
+						identical = false
+						break
+					}
+				}
+
 				if len(list) > 0 {
-					return errors.New("multiple cards match")
+					if !identical {
+						return errors.New("multiple cards match")
+					}
+					return nil
 				}
 				list = append(list, c)
 				return nil
@@ -725,8 +776,8 @@ Fuzzy db seems out of sync with your collection db try committing a restarting.`
 
 			roptions := make([]mtgjson.Card, 0, len(options))
 			for _, c := range options {
-				rc, err := c.Card.Card(cards)
-				if err == nil {
+				rc, ok := cardByUUID(c.UUID)
+				if ok {
 					roptions = append(roptions, rc)
 				}
 			}
@@ -749,7 +800,7 @@ Fuzzy db seems out of sync with your collection db try committing a restarting.`
 			if len(options) == 0 {
 				printErr(errors.New("no results"))
 				return
-			} else if len(options) < 100 {
+			} else if len(options) <= 10000 {
 				modifyState(false, func(s State) State {
 					s.Query = line
 					s.Options = options
