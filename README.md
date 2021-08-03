@@ -4,6 +4,14 @@ cause mtgo was taken
 
 ![screencast](https://raw.githubusercontent.com/frizinak/gomtg/dev/.github/screen.gif)
 
+## Installation
+
+`go install github.com/frizinak/gomtg/cmd/gomtg`
+
+or
+
+wait for a binary release
+
 ## Features
 
 - [x] fuzzy searching in mtgjson.com card data
