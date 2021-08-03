@@ -11,7 +11,6 @@ type State struct {
 	Mode      Mode
 	PrevMode  Mode
 	FilterSet mtgjson.SetID
-	Query     string
 	Selection []mtgjson.Card
 	Options   []mtgjson.Card
 	Local     []LocalCard
@@ -21,7 +20,6 @@ func (s State) Equal(o State) bool {
 	if s.Mode != o.Mode ||
 		s.PrevMode != o.PrevMode ||
 		s.FilterSet != o.FilterSet ||
-		s.Query != o.Query ||
 		len(s.Selection) != len(o.Selection) ||
 		len(s.Options) != len(o.Options) {
 		return false
@@ -46,7 +44,7 @@ func (s State) String(colors Colors) string {
 	for _, c := range s.Selection {
 		data = append(
 			data,
-			fmt.Sprintf("  \u2514 %s", cardsString([]mtgjson.Card{c}, colors, false)),
+			fmt.Sprintf("  \u2514 %s", cardsString([]mtgjson.Card{c}, colors, false)[0]),
 		)
 	}
 

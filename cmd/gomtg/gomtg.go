@@ -202,6 +202,7 @@ func main() {
 	var imageCommand string
 	var imageAutoReload bool
 	var imageRefreshCommand string
+	var imageAutoView bool
 	var imageNoCache bool
 	var dbFile string
 	colors := Colors{
@@ -243,6 +244,7 @@ ignored if -ia is passed. {fn} is replaced by the filename and {pid} with the pr
 	flag.StringVar(&dbFile, "db", "gomtg.db", "Database file to use")
 	flag.StringVar(&colorStr, "c", colorStr, "change default colors (key:bg:fg:bold[,key:value...])")
 	flag.BoolVar(&testColors, "color-test", testColors, "test colors")
+	flag.BoolVar(&imageAutoView, "iav", false, "Show last added card in image viewer")
 	flag.Parse()
 
 	_ = os.MkdirAll(dir, 0700)
@@ -468,6 +470,47 @@ ignored if -ia is passed. {fn} is replaced by the filename and {pid} with the pr
 		return
 	}
 
+	lastAdded := make([]mtgjson.Card, 0)
+	addToCollection := func(cards []mtgjson.Card, modify func(s State) State) {
+		if len(cards) == 0 {
+			return
+		}
+		modifyState(true, func(s State) State {
+			s.Selection = append(s.Selection, cards...)
+			return modify(s)
+		})
+
+		for i := range cards {
+			times := 1
+			cut := len(lastAdded)
+			for j := len(lastAdded) - 1; j >= 0; j-- {
+				if lastAdded[j].UUID == cards[i].UUID {
+					times++
+					cut = j
+				}
+			}
+			lastAdded = lastAdded[cut:]
+			lastAdded = append(lastAdded, cards[i])
+			printAlert(
+				fmt.Sprintf(
+					"Added %s x %d",
+					cardsString(cards[i:i+1], colors, false)[0],
+					times,
+				))
+		}
+
+		err := genImages(cards, imagePath, imageGetter, func(i, total int) {})
+		if err != nil {
+			printErr(err)
+			return
+		}
+		lastImageListID = ""
+		err = spawnViewer(imageCommand, imageRefreshCommand, imageAutoReload, imagePath)
+		if err != nil {
+			printErr(err)
+		}
+	}
+
 	_commandQ := func([]string) error {
 		if len(queue) == 1 {
 			print("Queue is empty")
@@ -484,18 +527,19 @@ ignored if -ia is passed. {fn} is replaced by the filename and {pid} with the pr
 			print("Usage:")
 			print("SIGINT (Ctrl-c)       cancel action in progress")
 			print("/help                 this")
-			print("/exit  | /quit        quit")
-			print("/queue | /q           view operation queue")
+			print("/exit   | /quit       quit")
+			print("/queue  | /q          view operation queue")
+			print("/repeat | /r          add last card again")
 			print("/sets  <filter>       print all known sets (optionally filtered)")
-			print("/undo  | /u           remove last item from queue")
+			print("/undo   | /u          remove last item from queue")
 			print("/images | /imgs       create a collage of all cards in current list")
-			print("/image | /img <uuid>  show card image for card with (partial) UUID <uuid>")
+			print("/image  | /img <uuid> show card image for card with (partial) UUID <uuid>")
 			print("/commit               commit selection to file (empties selection)")
-			print("/mode  | /m <mode>    enter <mode>")
+			print("/mode   | /m <mode>   enter <mode>")
 			print("                        - add:    add cards by entering their name (fuzzy)")
 			print("                        - col:    search your collection for cards (fuzzy)")
 			print("                        - search: search all cards (fuzzy)")
-			print("/set   | /s <set>     only operate on cards within the given set")
+			print("/set    | /s <set>    only operate on cards within the given set")
 			return nil
 		},
 		"exit": func([]string) error {
@@ -673,6 +717,19 @@ ignored if -ia is passed. {fn} is replaced by the filename and {pid} with the pr
 			})
 			return nil
 		},
+		"repeat": func([]string) error {
+			if len(state.Selection) == 0 {
+				return errors.New("nothing to repeat")
+			}
+			addToCollection(
+				state.Selection[len(state.Selection)-1:],
+				func(s State) State {
+					return s
+				},
+			)
+
+			return nil
+		},
 	}
 
 	commands["quit"] = commands["exit"]
@@ -682,6 +739,7 @@ ignored if -ia is passed. {fn} is replaced by the filename and {pid} with the pr
 	commands["m"] = commands["mode"]
 	commands["s"] = commands["set"]
 	commands["q"] = commands["queue"]
+	commands["r"] = commands["repeat"]
 
 	handleCommand := func(f []string) (bool, error) {
 		isCommand := false
@@ -783,7 +841,6 @@ Fuzzy db seems out of sync with your collection db try committing a restarting.`
 			}
 
 			modifyState(false, func(s State) State {
-				s.Query = line
 				s.Local = options
 				s.Options = roptions
 				return s
@@ -802,7 +859,6 @@ Fuzzy db seems out of sync with your collection db try committing a restarting.`
 				return
 			} else if len(options) <= 10000 {
 				modifyState(false, func(s State) State {
-					s.Query = line
 					s.Options = options
 					s.PrevMode = s.Mode
 					return s
@@ -822,17 +878,10 @@ Fuzzy db seems out of sync with your collection db try committing a restarting.`
 				printErr(errors.New("no results"))
 				return
 			} else if len(options) == 1 {
-				modifyState(true, func(s State) State {
-					s.Query = line
-					s.Selection = append(s.Selection, options...)
-					return s
-				})
-
-				printAlert(fmt.Sprintf("Added %s", cardsString(options[:1], colors, false)))
+				addToCollection(options, func(s State) State { return s })
 				return
 			} else if len(options) < 100 {
 				modifyState(true, func(s State) State {
-					s.Query = line
 					s.Options = options
 					s.PrevMode = s.Mode
 					s.Mode = ModeSel
@@ -865,11 +914,9 @@ Fuzzy db seems out of sync with your collection db try committing a restarting.`
 				return
 			}
 
-			modifyState(true, func(s State) State {
+			addToCollection(sel, func(s State) State {
 				s.Options = nil
 				s.Mode = s.PrevMode
-				s.Selection = append(s.Selection, sel[0])
-				printAlert(fmt.Sprintf("Added %s", cardsString(sel[:1], colors, false)))
 				return s
 			})
 		}
@@ -943,7 +990,6 @@ Fuzzy db seems out of sync with your collection db try committing a restarting.`
 			modifyState(true, func(s State) State {
 				switch s.Mode {
 				case ModeSel:
-					s.Query = ""
 					s.Mode = s.PrevMode
 					s.Options = nil
 				}
