@@ -41,10 +41,13 @@ func (s State) Equal(o State) bool {
 	return true
 }
 
-func (s State) String() string {
+func (s State) String(colors Colors) string {
 	data := []string{s.StringShort()}
 	for _, c := range s.Selection {
-		data = append(data, fmt.Sprintf("  \u2514 %s", cardString(c)))
+		data = append(
+			data,
+			fmt.Sprintf("  \u2514 %s", cardsString([]mtgjson.Card{c}, colors, false)),
+		)
 	}
 
 	return strings.Join(data, "\n")

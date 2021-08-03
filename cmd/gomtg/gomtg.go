@@ -30,12 +30,125 @@ func progress(msg string, cb func() error) error {
 	return nil
 }
 
-func cardString(c mtgjson.Card) string {
-	return fmt.Sprintf("%s \u2502 %-5s \u2502 %s", c.UUID, c.SetCode, c.Name)
+func uniqUUIDPart(list []string) []string {
+	if len(list) > 1000 {
+		return list
+	}
+
+	data := make(map[string]map[int]struct{})
+	for i, item := range list {
+		for ln := 1; ln <= len(item); ln++ {
+			for n := 0; n <= len(item)-ln; n++ {
+				sub := item[n : n+ln]
+				if strings.Contains(sub, "-") {
+					continue
+				}
+				if _, ok := data[sub]; !ok {
+					data[sub] = make(map[int]struct{}, 1)
+				}
+				data[sub][i] = struct{}{}
+			}
+		}
+	}
+
+	ret := make([]string, len(list))
+	wasAlpha := make([]bool, len(list))
+	for i, s := range data {
+		if len(s) != 1 {
+			continue
+		}
+
+		for k := range s {
+			alpha := true
+			for _, c := range i {
+				if c < 'a' || c > 'z' {
+					alpha = false
+					break
+				}
+			}
+			switch {
+			case len(ret[k]) == 0,
+				alpha == wasAlpha[k] && len(i) < len(ret[k]),
+				alpha == wasAlpha[k] && len(i) == len(ret[k]) && i < ret[k],
+				!alpha && wasAlpha[k] && len(i)+4 < len(ret[k]),
+				alpha && !wasAlpha[k] && len(i) < len(ret[k])+4:
+				wasAlpha[k] = alpha
+				ret[k] = i
+			}
+		}
+	}
+	for i := range ret {
+		if ret[i] == "" {
+			ret[i] = list[i]
+		}
+
+	}
+
+	return ret
 }
 
-func localCardString(c LocalCard) string {
-	return fmt.Sprintf("%6d \u2502 %s \u2502 %-5s \u2502 %s", c.Index+1, c.UUID, c.SetID, c.Name)
+func colorUniqUUID(uuids []string, colors Colors) []string {
+	list := uniqUUIDPart(uuids)
+	ret := make([]string, len(uuids))
+	clrH := colors.Get("high")
+	clrL := colors.Get("low")
+	for i := range uuids {
+		if len(uuids[i]) == len(list[i]) {
+			ret[i] = " " + uuids[i] + " "
+			continue
+		}
+		ix := strings.Index(uuids[i], list[i])
+		pre := uuids[i][0:ix]
+		sub := uuids[i][ix : ix+len(list[i])]
+		suf := uuids[i][ix+len(list[i]):]
+		ret[i] = fmt.Sprintf("%s%s\033[0m%s %s \033[0m%s%s\033[0m", clrL, pre, clrH, sub, clrL, suf)
+	}
+
+	return ret
+}
+
+func cardsString(cards []mtgjson.Card, colors Colors, uniq bool) []string {
+	l := make([]string, len(cards))
+	uuids := make([]string, len(cards))
+	for i, c := range cards {
+		uuids[i] = string(c.UUID)
+	}
+
+	if uniq {
+		uuids = colorUniqUUID(uuids, colors)
+	}
+
+	for i, c := range cards {
+		l[i] = fmt.Sprintf(
+			"%s \u2502 %-5s \u2502 %s",
+			uuids[i],
+			c.SetCode,
+			c.Name,
+		)
+	}
+	return l
+}
+
+func localCardsString(cards []LocalCard, colors Colors, uniq bool) []string {
+	l := make([]string, len(cards))
+	uuids := make([]string, len(cards))
+	for i, c := range cards {
+		uuids[i] = string(c.UUID)
+	}
+
+	if uniq {
+		uuids = colorUniqUUID(uuids, colors)
+	}
+	for i, c := range cards {
+		l[i] = fmt.Sprintf(
+			"%6d \u2502 %s \u2502 %-5s \u2502 %s",
+			c.Index+1,
+			uuids[i],
+			c.SetID,
+			c.Name,
+		)
+	}
+	return l
 }
 
 func cardListID(c []mtgjson.Card) string {
@@ -52,6 +165,16 @@ func main() {
 	var imageCommand string
 	var imageAutoReload bool
 	var dbFile string
+	colors := Colors{
+		"bad":    {0, 2, 1},
+		"good":   {1, 3, 1},
+		"high":   {8, 1, 1},
+		"low":    {0, 1, 0},
+		"status": {3, 1, 0},
+	}
+	colorStr := colors.Encode()
+	var testColors bool
+
 	flag.BoolVar(&skipIntro, "n", false, "Skip intro")
 	flag.StringVar(
 		&imageCommand,
@@ -70,6 +193,8 @@ e.g.: -i "imv" -ia`,
 Only useful if your viewer auto reloads updated images (imv and feh for example)`,
 	)
 	flag.StringVar(&dbFile, "db", "gomtg.db", "Database file to use")
+	flag.StringVar(&colorStr, "c", colorStr, "change default colors (key:bg:fg:bold[,key:value...])")
+	flag.BoolVar(&testColors, "color-test", testColors, "test colors")
 	flag.Parse()
 
 	lockFile, err := filepath.Abs(dbFile + ".lock")
@@ -109,6 +234,23 @@ Only useful if your viewer auto reloads updated images (imv and feh for example)
 		fmt.Fprintln(os.Stderr, err.Error())
 		cleanup()
 		os.Exit(1)
+	}
+
+	ncolors, err := DecodeColors(colorStr)
+	exit(err)
+	colors = ncolors.Merge(colors)
+	if testColors {
+		d := map[string]string{
+			"bad":    "an error",
+			"good":   "an important message",
+			"high":   "highlighted",
+			"low":    "nobody cares about this",
+			"status": "mode:test set: selected:>3000",
+		}
+		for k, v := range d {
+			fmt.Printf("%s %s \033[0m\n", colors.Get(k), v)
+		}
+		os.Exit(0)
 	}
 
 	go func() {
@@ -197,21 +339,25 @@ Only useful if your viewer auto reloads updated images (imv and feh for example)
 	state := State{Mode: ModeCol}
 	output := make([]string, 1, 30)
 
-	print := func(msg string) {
-		output = append(output, msg)
+	print := func(msg ...string) {
+		output = append(output, msg...)
 	}
 	printAlert := func(msg string) {
-		print(fmt.Sprintf("\033[1;32m %s \033[0m", msg))
+		clr := colors.Get("good")
+		print(fmt.Sprintf("%s %s \033[0m", clr, msg))
 	}
 	printErr := func(err error) {
 		if err == nil {
 			return
 		}
-		print(fmt.Sprintf("\033[31m%s\033[0m", err.Error()))
+
+		clr := colors.Get("bad")
+		print(fmt.Sprintf("%s%s\033[0m", clr, err.Error()))
 	}
 	flush := func() {
 		fmt.Print("\033[2J\033[0;0H")
-		output[0] = fmt.Sprintf("\033[30;42m %s \033[0m\n", state.StringShort())
+		clr := colors.Get("status")
+		output[0] = fmt.Sprintf("%s %s \033[0m\n", clr, state.StringShort())
 		fmt.Print(strings.Join(output, "\n"))
 		output = make([]string, 1, 30)
 	}
@@ -229,14 +375,10 @@ Only useful if your viewer auto reloads updated images (imv and feh for example)
 	lastImageListID := ""
 	printOptions := func() {
 		if state.Mode == ModeCol {
-			for _, c := range state.Local {
-				print(localCardString(c))
-			}
+			print(localCardsString(state.Local, colors, true)...)
 			return
 		}
-		for _, c := range state.Options {
-			print(cardString(c))
-		}
+		print(cardsString(state.Options, colors, true)...)
 	}
 
 	printSets := func(filter string) {
@@ -261,7 +403,7 @@ Only useful if your viewer auto reloads updated images (imv and feh for example)
 			return nil
 		}
 		for _, s := range queue[1:] {
-			print("- " + s.String())
+			print("- " + s.String(colors))
 		}
 		return nil
 	}
@@ -600,7 +742,7 @@ Fuzzy db seems out of sync with your collection db try committing a restarting.`
 					return s
 				})
 
-				printAlert(fmt.Sprintf("Added %s", cardString(options[0])))
+				printAlert(fmt.Sprintf("Added %s", cardsString(options[:1], colors, false)))
 				return
 			} else if len(options) < 100 {
 				modifyState(true, func(s State) State {
@@ -641,7 +783,7 @@ Fuzzy db seems out of sync with your collection db try committing a restarting.`
 				s.Options = nil
 				s.Mode = s.PrevMode
 				s.Selection = append(s.Selection, sel[0])
-				printAlert(fmt.Sprintf("Added %s", cardString(sel[0])))
+				printAlert(fmt.Sprintf("Added %s", cardsString(sel[:1], colors, false)))
 				return s
 			})
 		}
@@ -664,7 +806,6 @@ Fuzzy db seems out of sync with your collection db try committing a restarting.`
 	}
 
 	for _, arg := range flag.Args() {
-		fmt.Println(arg)
 		print(fmt.Sprintf("> %s", arg))
 		handleInputLine(arg)
 	}
