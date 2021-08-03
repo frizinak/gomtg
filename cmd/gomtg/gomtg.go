@@ -445,6 +445,7 @@ Only useful if your viewer auto reloads updated images (imv and feh for example)
 	commands["u"] = commands["undo"]
 	commands["m"] = commands["mode"]
 	commands["s"] = commands["set"]
+	commands["q"] = commands["queue"]
 
 	handleCommand := func(f []string) (bool, error) {
 		isCommand := false
