@@ -239,10 +239,15 @@ Only useful if your viewer auto reloads updated images (imv and feh for example)
 		}
 	}
 
-	printSets := func() {
+	printSets := func(filter string) {
+		filter = strings.ToLower(filter)
 		list := make([]string, 0, len(data))
 		for _, d := range data {
-			list = append(list, fmt.Sprintf("%s: %s", d.Code, d.Name))
+			v := fmt.Sprintf("%s: %s", d.Code, d.Name)
+			if filter != "" && !strings.Contains(strings.ToLower(v), filter) {
+				continue
+			}
+			list = append(list, v)
 		}
 		sort.Strings(list)
 		for _, item := range list {
@@ -268,7 +273,7 @@ Only useful if your viewer auto reloads updated images (imv and feh for example)
 			print("/help                 this")
 			print("/exit  | /quit        quit")
 			print("/queue | /q           view operation queue")
-			print("/sets                 print all known sets")
+			print("/sets  <filter>       print all known sets (optionally filtered)")
 			print("/undo  | /u           remove last item from queue")
 			print("/images | /imgs       create a collage of all cards in current list")
 			print("/image | /img <uuid>  show card image for card with (partial) UUID <uuid>")
@@ -313,8 +318,8 @@ Only useful if your viewer auto reloads updated images (imv and feh for example)
 			rebuildLocalFuzz()
 			return nil
 		},
-		"sets": func([]string) error {
-			printSets()
+		"sets": func(args []string) error {
+			printSets(strings.Join(args, " "))
 			return nil
 		},
 		"images": func([]string) error {
@@ -428,7 +433,7 @@ Only useful if your viewer auto reloads updated images (imv and feh for example)
 			}
 			fs := mtgjson.SetID(strings.ToUpper(arg))
 			if _, ok := sets[fs]; !ok {
-				printSets()
+				printSets("")
 				return fmt.Errorf("invalid set id: '%s'", arg)
 			}
 			modifyState(true, func(s State) State {
