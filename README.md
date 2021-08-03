@@ -15,4 +15,5 @@ cause mtgo was taken
     e.g.: keeping track of the index of a physical card in a shoebox
 - [ ] card tagging
     could be powerful enough to keep track of decks, multiple owners etc...
+- [ ] card and collection prices
 
