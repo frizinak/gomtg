@@ -10,7 +10,9 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -29,6 +31,39 @@ func progress(msg string, cb func() error) error {
 	}
 	fmt.Printf("\033[2GX\033[30C %dms\n\033[?25h", int(time.Since(ts).Milliseconds()))
 	return nil
+}
+
+func intRange(str string) ([]int, bool) {
+	comma := strings.FieldsFunc(str, func(r rune) bool {
+		return r == ',' || r == ' '
+	})
+	r := make([]int, 0, len(comma))
+	for _, n := range comma {
+		dash := strings.SplitN(n, "-", 2)
+		v, err := strconv.Atoi(strings.TrimSpace(dash[0]))
+		if err != nil {
+			return r, false
+		}
+		if len(dash) != 2 {
+			r = append(r, v)
+			continue
+		}
+
+		if len(dash) == 2 {
+			v2, err := strconv.Atoi(strings.TrimSpace(dash[1]))
+			if err != nil {
+				return r, false
+			}
+			if v2 < v {
+				return r, false
+			}
+			for i := v; i <= v2; i++ {
+				r = append(r, i)
+			}
+		}
+	}
+
+	return r, len(r) > 0
 }
 
 func uniqUUIDPart(list []string) [][3]string {
@@ -118,8 +153,11 @@ func uniqUUIDPart(list []string) [][3]string {
 func colorUniqUUID(uuids []string, colors Colors) []string {
 	list := uniqUUIDPart(uuids)
 	ret := make([]string, len(uuids))
-	clrH := colors.Get("high")
-	clrL := colors.Get("low")
+	clrH, clrL := "", ""
+	if colors != nil {
+		clrH = colors.Get("high")
+		clrL = colors.Get("low")
+	}
 	for i := range list {
 		ret[i] = fmt.Sprintf(
 			"%s%s\033[0m%s %s \033[0m%s%s\033[0m",
@@ -135,7 +173,7 @@ func colorUniqUUID(uuids []string, colors Colors) []string {
 	return ret
 }
 
-func cardsString(cards []mtgjson.Card, colors Colors, uniq bool) []string {
+func cardsString(db *DB, cards []mtgjson.Card, colors Colors, uniq bool) []string {
 	l := make([]string, len(cards))
 	uuids := make([]string, len(cards))
 	for i, c := range cards {
@@ -148,32 +186,48 @@ func cardsString(cards []mtgjson.Card, colors Colors, uniq bool) []string {
 
 	for i, c := range cards {
 		l[i] = fmt.Sprintf(
-			"%s \u2502 %-5s \u2502 %s",
+			"%s \u2502 %-5s \u2502 %-4d \u2502 %s",
 			uuids[i],
 			c.SetCode,
+			db.Count(c.UUID),
 			c.Name,
 		)
 	}
 	return l
 }
 
-func localCardsString(cards []LocalCard, colors Colors, uniq bool) []string {
+func localCardsString(db *DB, cards []LocalCard, colors Colors, uniq bool) []string {
 	l := make([]string, len(cards))
 	uuids := make([]string, len(cards))
 	for i, c := range cards {
-		uuids[i] = string(c.UUID)
+		uuids[i] = string(c.UUID())
 	}
 
 	if uniq {
 		uuids = colorUniqUUID(uuids, colors)
 	}
+
+	longestTitle := 0
+	for _, c := range cards {
+		l := len(c.Name())
+		if l > longestTitle {
+			longestTitle = l
+		}
+	}
+	titlePad := strconv.Itoa(longestTitle)
+
 	for i, c := range cards {
+		tags := c.Tags()
+		tagstr := strings.Join(tags, ",")
+
 		l[i] = fmt.Sprintf(
-			"%6d \u2502 %s \u2502 %-5s \u2502 %s",
+			"%6d \u2502 %s \u2502 %-5s \u2502 %-4d \u2502 %-"+titlePad+"s \u2502 %s",
 			c.Index+1,
 			uuids[i],
-			c.SetID,
-			c.Name,
+			c.SetID(),
+			db.Count(c.UUID()),
+			c.Name(),
+			tagstr,
 		)
 	}
 	return l
@@ -351,7 +405,7 @@ ignored if -ia is passed. {fn} is replaced by the filename and {pid} with the pr
 	rebuildLocalFuzz := func() {
 		list := make([]string, 0)
 		for _, card := range db.Cards() {
-			list = append(list, card.Name)
+			list = append(list, card.Name())
 		}
 		localFuzz = fuzzy.NewIndex(2, list)
 	}
@@ -394,7 +448,7 @@ ignored if -ia is passed. {fn} is replaced by the filename and {pid} with the pr
 		return nil
 	}))
 
-	state := State{Mode: ModeCol}
+	state := State{Mode: ModeCollection}
 	output := make([]string, 1, 30)
 
 	print := func(msg ...string) {
@@ -425,6 +479,10 @@ ignored if -ia is passed. {fn} is replaced by the filename and {pid} with the pr
 	modifyState := func(undoable bool, cb func(s State) State) {
 		ostate := state
 		state = cb(state)
+		if state.PrevMode != ostate.Mode && ostate.Mode.ValidInput() {
+			state.PrevMode = ostate.Mode
+			state.PageOffset = 0
+		}
 		if undoable && !ostate.Equal(state) {
 			queue = append(queue, state)
 		}
@@ -432,11 +490,11 @@ ignored if -ia is passed. {fn} is replaced by the filename and {pid} with the pr
 
 	lastImageListID := ""
 	printOptions := func() {
-		if state.Mode == ModeCol {
-			print(localCardsString(state.Local, colors, true)...)
+		if state.Mode == ModeCollection {
+			print(localCardsString(db, state.Local, colors, true)...)
 			return
 		}
-		print(cardsString(state.Options, colors, true)...)
+		print(cardsString(db, state.Options, colors, true)...)
 	}
 
 	printSets := func(filter string) {
@@ -471,13 +529,13 @@ ignored if -ia is passed. {fn} is replaced by the filename and {pid} with the pr
 	}
 
 	lastAdded := make([]mtgjson.Card, 0)
-	addToCollection := func(cards []mtgjson.Card, modify func(s State) State) {
+	addToCollection := func(cards []mtgjson.Card) {
 		if len(cards) == 0 {
 			return
 		}
 		modifyState(true, func(s State) State {
 			s.Selection = append(s.Selection, cards...)
-			return modify(s)
+			return s
 		})
 
 		for i := range cards {
@@ -493,10 +551,11 @@ ignored if -ia is passed. {fn} is replaced by the filename and {pid} with the pr
 			lastAdded = append(lastAdded, cards[i])
 			printAlert(
 				fmt.Sprintf(
-					"Added %s x %d",
-					cardsString(cards[i:i+1], colors, false)[0],
+					"Added '%s' to selection (%d times)",
+					cards[i].Name,
 					times,
-				))
+				),
+			)
 		}
 
 		err := genImages(cards, imagePath, imageGetter, func(i, total int) {})
@@ -517,29 +576,37 @@ ignored if -ia is passed. {fn} is replaced by the filename and {pid} with the pr
 			return nil
 		}
 		for _, s := range queue[1:] {
-			print("- " + s.String(colors))
+			print("- " + s.String(db, colors))
 		}
 		return nil
 	}
 
+	refreshCh := make(chan struct{}, 1)
+	refresh := func() { go func() { refreshCh <- struct{}{} }() }
+
 	commands := map[string]func(arg []string) error{
 		"help": func([]string) error {
 			print("Usage:")
-			print("SIGINT (Ctrl-c)       cancel action in progress")
-			print("/help                 this")
-			print("/exit   | /quit       quit")
-			print("/queue  | /q          view operation queue")
-			print("/repeat | /r          add last card again")
-			print("/sets  <filter>       print all known sets (optionally filtered)")
-			print("/undo   | /u          remove last item from queue")
-			print("/images | /imgs       create a collage of all cards in current list")
-			print("/image  | /img <uuid> show card image for card with (partial) UUID <uuid>")
-			print("/commit               commit selection to file (empties selection)")
-			print("/mode   | /m <mode>   enter <mode>")
-			print("                        - add:    add cards by entering their name (fuzzy)")
-			print("                        - col:    search your collection for cards (fuzzy)")
-			print("                        - search: search all cards (fuzzy)")
-			print("/set    | /s <set>    only operate on cards within the given set")
+			print("SIGINT (Ctrl-c)               cancel action in progress")
+			print("/help                         this")
+			print("/exit   | /quit               quit")
+			print("/queue  | /q                  view operation queue")
+			print("/repeat | /r                  add last card again")
+			print("/sets  <filter>               print all known sets (optionally filtered)")
+			print("/undo   | /u                  remove last item from queue")
+			print("/images | /imgs               create a collage of all cards in current list")
+			print("/image  | /img <uuid>         show card image for card with (partial) UUID <uuid>")
+			print("/tag  {+|-}<tag>,…            tag/untag cards in collection with <tag>")
+			print("                              filter your collection (/mode collection)")
+			print("                              and add / remove tags")
+			print("                              e.g.: +nm -played +shoebox")
+			print("/commit                       commit selection to file (empties selection)")
+			print("/mode   | /m <mode>           enter <mode>")
+			print("                                - add:           add cards by entering their name (fuzzy)")
+			print("                                - collection:    search your collection for cards")
+			print("                                                 by name (fuzzy) or a range (1,2,8-10)")
+			print("                                - search:        search all cards (fuzzy)")
+			print("/set    | /s <set>            only operate on cards within the given set")
 			return nil
 		},
 		"exit": func([]string) error {
@@ -565,8 +632,18 @@ ignored if -ia is passed. {fn} is replaced by the filename and {pid} with the pr
 				queue[i].Selection = nil
 			}
 			for _, c := range selection {
-				db.Add(FromCard(c))
+				db.AddMTGJSON(c)
 			}
+
+			tags := state.Tagging
+			state.Tagging = nil
+			for i := range queue {
+				queue[i].Tagging = nil
+			}
+			for _, t := range tags {
+				t.Commit()
+			}
+
 			err := db.Save(dbFile)
 			if err != nil {
 				return err
@@ -676,7 +753,7 @@ ignored if -ia is passed. {fn} is replaced by the filename and {pid} with the pr
 			m := Mode(arg)
 			c := 0
 			if !m.ValidInput() {
-				for _, mode := range AllInputModes {
+				for mode := range AllInputModes {
 					if strings.HasPrefix(string(mode), arg) {
 						c++
 						m = mode
@@ -691,6 +768,7 @@ ignored if -ia is passed. {fn} is replaced by the filename and {pid} with the pr
 				s.Mode = m
 				return s
 			})
+			refresh()
 
 			return nil
 		},
@@ -721,13 +799,32 @@ ignored if -ia is passed. {fn} is replaced by the filename and {pid} with the pr
 			if len(state.Selection) == 0 {
 				return errors.New("nothing to repeat")
 			}
-			addToCollection(
-				state.Selection[len(state.Selection)-1:],
-				func(s State) State {
-					return s
-				},
-			)
+			addToCollection(state.Selection[len(state.Selection)-1:])
 
+			return nil
+		},
+		"tag": func(args []string) error {
+			if state.Mode != ModeCollection {
+				return errors.New("/tags can only be called from /mode collection")
+			}
+			tags := make([]Tagging, 0, len(args))
+			for _, arg := range args {
+				if len(arg) < 2 || (arg[0] != '-' && arg[0] != '+') {
+					return fmt.Errorf("'%s' is no a valid tag specifier", arg)
+				}
+				for _, c := range state.Local {
+					t := NewTagging(c.Card)
+					t.Add(arg[0] == '+', arg[1:])
+					tags = append(tags, t)
+				}
+			}
+
+			modifyState(true, func(s State) State {
+				s.Tagging = append(s.Tagging, tags...)
+				return s
+			})
+
+			printAlert(fmt.Sprintf("Updated %d card(s)", len(state.Local)))
 			return nil
 		},
 	}
@@ -774,36 +871,50 @@ ignored if -ia is passed. {fn} is replaced by the filename and {pid} with the pr
 		return list
 	}
 
+	numericRE := regexp.MustCompile(`^\d[\d,\- ]+$`)
 	searchLocal := func(qry string) ([]LocalCard, error) {
 		filter := func(c *Card) bool {
-			return state.FilterSet == "" || c.SetID == state.FilterSet
+			return state.FilterSet == "" || c.SetID() == state.FilterSet
 		}
 		if qry == "" {
 			all := db.Cards()
 			list := make([]LocalCard, 0, len(all))
 			for i, c := range all {
 				if filter(c) {
-					list = append(list, LocalCard{c, i})
+					list = append(list, NewLocalCard(c, i))
 				}
 			}
 			return list, nil
 		}
 
-		res := localFuzz.Search(qry, func(score, min, max int) bool {
-			return score > 0 && score == max
-		})
+		search := func() []int {
+			return localFuzz.Search(qry, func(score, min, max int) bool {
+				return score > 0 && score == max
+			})
+		}
 
+		if numericRE.MatchString(qry) {
+			ints, ok := intRange(qry)
+			if ok {
+				search = func() []int {
+					res := make([]int, len(ints))
+					for i, n := range ints {
+						res[i] = n - 1
+					}
+					return res
+				}
+			}
+		}
+
+		res := search()
 		list := make([]LocalCard, 0, len(res))
 		for _, ix := range res {
 			c, ok := db.CardAt(ix)
 			if !ok {
-				// ugh?
-				return list, errors.New(`An unexpected error occurred,
-nothing bad though.
-Fuzzy db seems out of sync with your collection db try committing a restarting.`)
+				return list, errors.New(`Invalid item/range`)
 			}
 			if filter(c) {
-				list = append(list, LocalCard{c, ix})
+				list = append(list, NewLocalCard(c, ix))
 			}
 		}
 
@@ -821,7 +932,7 @@ Fuzzy db seems out of sync with your collection db try committing a restarting.`
 		}
 
 		switch state.Mode {
-		case ModeCol:
+		case ModeCollection:
 			options, err := searchLocal(line)
 			if err != nil {
 				printErr(err)
@@ -834,7 +945,7 @@ Fuzzy db seems out of sync with your collection db try committing a restarting.`
 
 			roptions := make([]mtgjson.Card, 0, len(options))
 			for _, c := range options {
-				rc, ok := cardByUUID(c.UUID)
+				rc, ok := cardByUUID(c.UUID())
 				if ok {
 					roptions = append(roptions, rc)
 				}
@@ -860,7 +971,6 @@ Fuzzy db seems out of sync with your collection db try committing a restarting.`
 			} else if len(options) <= 10000 {
 				modifyState(false, func(s State) State {
 					s.Options = options
-					s.PrevMode = s.Mode
 					return s
 				})
 				printOptions()
@@ -878,13 +988,12 @@ Fuzzy db seems out of sync with your collection db try committing a restarting.`
 				printErr(errors.New("no results"))
 				return
 			} else if len(options) == 1 {
-				addToCollection(options, func(s State) State { return s })
+				addToCollection(options)
 				return
 			} else if len(options) < 100 {
 				modifyState(true, func(s State) State {
 					s.Options = options
-					s.PrevMode = s.Mode
-					s.Mode = ModeSel
+					s.Mode = ModeSelect
 					return s
 				})
 				printOptions()
@@ -894,7 +1003,7 @@ Fuzzy db seems out of sync with your collection db try committing a restarting.`
 			printErr(errors.New("too many results, try a more specific query"))
 			return
 
-		case ModeSel:
+		case ModeSelect:
 			sel := make([]mtgjson.Card, 0, 1)
 			for _, c := range state.Options {
 				if strings.Contains(strings.ToLower(string(c.UUID)), strings.ToLower(line)) {
@@ -914,7 +1023,8 @@ Fuzzy db seems out of sync with your collection db try committing a restarting.`
 				return
 			}
 
-			addToCollection(sel, func(s State) State {
+			addToCollection(sel)
+			modifyState(false, func(s State) State {
 				s.Options = nil
 				s.Mode = s.PrevMode
 				return s
@@ -961,15 +1071,15 @@ Fuzzy db seems out of sync with your collection db try committing a restarting.`
 			print("________________________________")
 			print("Search all and add to collection")
 			print("> ")
-		case ModeCol:
+		case ModeCollection:
 			print("_________________")
-			print("Search collection")
+			print("Search collection (card name or range)")
 			print("> ")
 		case ModeSearch:
 			print("__________")
 			print("Search all")
 			print("> ")
-		case ModeSel:
+		case ModeSelect:
 			print("_____________________________________")
 			print("Enter (partial) UUID to select a card")
 			listID := cardListID(state.Options)
@@ -984,17 +1094,22 @@ Fuzzy db seems out of sync with your collection db try committing a restarting.`
 	}
 
 	prompt()
+	refresh()
 	for {
 		select {
 		case <-cancelCh:
 			modifyState(true, func(s State) State {
 				switch s.Mode {
-				case ModeSel:
+				case ModeSelect:
 					s.Mode = s.PrevMode
 					s.Options = nil
+					s.Local = nil
 				}
 				return s
 			})
+			prompt()
+		case <-refreshCh:
+			handleInputLine("")
 			prompt()
 		case txt := <-inputCh:
 			handleInputLine(txt)

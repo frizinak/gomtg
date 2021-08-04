@@ -3,40 +3,113 @@ package main
 import (
 	"encoding/json"
 	"os"
+	"sort"
 
 	"github.com/frizinak/gomtg/mtgjson"
 )
 
+type Tags map[string]struct{}
+
+func (t Tags) Slice() []string {
+	s := make([]string, 0, len(t))
+	for i := range t {
+		s = append(s, i)
+	}
+	sort.Strings(s)
+	return s
+}
+
+func (t Tags) Add(s []string) bool {
+	changed := false
+	for _, tag := range s {
+		if _, ok := t[tag]; !ok {
+			changed = true
+			t[tag] = struct{}{}
+		}
+	}
+	return changed
+}
+
+func (t Tags) Del(s []string) bool {
+	changed := false
+	for _, tag := range s {
+		if _, ok := t[tag]; ok {
+			changed = true
+			delete(t, tag)
+		}
+	}
+
+	return changed
+}
+
 type Card struct {
+	db    *DB
+	name  string
+	uuid  mtgjson.UUID
+	setID mtgjson.SetID
+	tags  Tags
+	del   bool
+}
+
+type jsonCard struct {
 	Name  string        `json:"name"`
 	UUID  mtgjson.UUID  `json:"uuid"`
 	SetID mtgjson.SetID `json:"set_id"`
 	Tags  []string      `json:"tags"`
 }
 
-func FromCard(c mtgjson.Card) *Card {
+func (c *Card) Name() string         { return c.name }
+func (c *Card) UUID() mtgjson.UUID   { return c.uuid }
+func (c *Card) SetID() mtgjson.SetID { return c.setID }
+func (c *Card) Tags() []string       { return c.tags.Slice() }
+
+func (c *Card) Tag(tags []string) {
+	changed := c.tags.Add(tags)
+	c.db.save = c.db.save || changed
+}
+
+func (c *Card) Untag(tags []string) {
+	changed := c.tags.Del(tags)
+	c.db.save = c.db.save || changed
+}
+
+func FromCard(db *DB, c mtgjson.Card) *Card {
 	return &Card{
-		UUID:  c.UUID,
-		SetID: c.SetCode,
-		Name:  c.Name,
-		Tags:  make([]string, 0),
+		db:    db,
+		uuid:  c.UUID,
+		setID: c.SetCode,
+		name:  c.Name,
+		tags:  make(Tags),
 	}
 }
 
 type DB struct {
-	data []*Card
-	save bool
+	data   []*Card
+	byUUID map[mtgjson.UUID][]int
+	save   bool
 }
 
 func (db *DB) Add(c *Card) {
 	db.data = append(db.data, c)
+	if _, ok := db.byUUID[c.uuid]; !ok {
+		db.byUUID[c.uuid] = make([]int, 0, 1)
+	}
+	db.byUUID[c.uuid] = append(db.byUUID[c.uuid], len(db.data)-1)
 	db.save = true
+}
+
+func (db *DB) AddMTGJSON(c mtgjson.Card) {
+	db.Add(FromCard(db, c))
 }
 
 func (db *DB) Cards() []*Card {
 	d := make([]*Card, len(db.data))
 	copy(d, db.data)
 	return d
+}
+
+func (db *DB) Count(uuid mtgjson.UUID) int {
+	return len(db.byUUID[uuid])
 }
 
 func (db *DB) CardAt(ix int) (*Card, bool) {
@@ -62,7 +135,13 @@ func (db *DB) Save(file string) error {
 
 	enc := json.NewEncoder(f)
 	for _, c := range db.data {
-		if err := enc.Encode(c); err != nil {
+		jc := jsonCard{
+			c.name,
+			c.uuid,
+			c.setID,
+			c.Tags(),
+		}
+		if err := enc.Encode(jc); err != nil {
 			f.Close()
 			os.Remove(tmp)
 			return err
@@ -74,24 +153,36 @@ func (db *DB) Save(file string) error {
 }
 
 func LoadDB(file string) (*DB, error) {
+	byUUID := make(map[mtgjson.UUID][]int)
+	db := &DB{data: make([]*Card, 0, 1024), byUUID: byUUID}
 	f, err := os.Open(file)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return &DB{data: make([]*Card, 0)}, nil
+			return db, nil
 		}
 		return nil, err
 	}
 	defer f.Close()
 
-	cards := make([]*Card, 0, 1024)
 	dec := json.NewDecoder(f)
 	for dec.More() {
-		c := &Card{}
-		if err := dec.Decode(c); err != nil {
+		jc := &jsonCard{}
+		if err := dec.Decode(jc); err != nil {
 			return nil, err
 		}
-		cards = append(cards, c)
+		tags := make(Tags)
+		tags.Add(jc.Tags)
+		c := &Card{
+			db,
+			jc.Name,
+			jc.UUID,
+			jc.SetID,
+			tags,
+			false,
+		}
+		db.Add(c)
 	}
+	db.save = false
 
-	return &DB{data: cards}, nil
+	return db, nil
 }
