@@ -450,7 +450,6 @@ ignored if -ia is passed. {fn} is replaced by the filename and {pid} with the pr
 	var db *DB
 	var localFuzz *fuzzy.Index
 
-	// TODO do this
 	rebuildLocalFuzz := func() {
 		list := make([]string, 0)
 		for _, card := range db.Cards() {
