@@ -14,10 +14,38 @@ type State struct {
 	FilterSet  mtgjson.SetID
 	Options    []mtgjson.Card
 	Local      []LocalCard
+	Tags       []string
 	PageOffset int
 
-	Selection []mtgjson.Card
+	Selection Selection
 	Tagging   []Tagging
+}
+
+type Selection []Select
+
+func (s Selection) Cards() []mtgjson.Card {
+	n := make([]mtgjson.Card, len(s))
+	for i, c := range s {
+		n[i] = c.Card
+	}
+	return n
+}
+
+type Select struct {
+	mtgjson.Card
+	Tags newTags
+}
+
+func NewSelect(c mtgjson.Card) Select {
+	return Select{c, make(newTags)}
+}
+
+func NewSelection(c []mtgjson.Card) []Select {
+	n := make([]Select, len(c))
+	for i, card := range c {
+		n[i] = NewSelect(card)
+	}
+	return n
 }
 
 func (s State) Equal(o State) bool {
@@ -25,6 +53,7 @@ func (s State) Equal(o State) bool {
 		s.PrevMode != o.PrevMode ||
 		s.FilterSet != o.FilterSet ||
 		len(s.Selection) != len(o.Selection) ||
+		len(s.Tags) != len(o.Tags) ||
 		len(s.Tagging) != len(o.Tagging) ||
 		len(s.Options) != len(o.Options) {
 		return false
@@ -37,6 +66,12 @@ func (s State) Equal(o State) bool {
 	}
 	for i := range s.Options {
 		if s.Options[i].UUID != o.Options[i].UUID {
+			return false
+		}
+	}
+
+	for i := range s.Tags {
+		if s.Tags[i] != o.Tags[i] {
 			return false
 		}
 	}
@@ -57,19 +92,19 @@ func (s State) String(db *DB, colors Colors) string {
 			data,
 			fmt.Sprintf(
 				"  \u2514 %s",
-				cardsString(db, []mtgjson.Card{c}, colors, false)[0],
+				cardsString(db, []mtgjson.Card{c.Card}, colors, false)[0],
 			),
 		)
 	}
 
 	tagsAdd := make(map[string]int)
-	tagsRem := make(map[string]int)
+	tagsDel := make(map[string]int)
 	for _, c := range s.Tagging {
 		for add := range c.tagsAdd {
 			tagsAdd[add]++
 		}
-		for rem := range c.tagsRem {
-			tagsRem[rem]++
+		for rem := range c.tagsDel {
+			tagsDel[rem]++
 		}
 	}
 
@@ -79,7 +114,7 @@ func (s State) String(db *DB, colors Colors) string {
 			fmt.Sprintf(" \u2514 added tag '%s' to %d cards", tag, amount),
 		)
 	}
-	for tag, amount := range tagsRem {
+	for tag, amount := range tagsDel {
 		data = append(
 			data,
 			fmt.Sprintf(" \u2514 removed tag '%s' from %d cards", tag, amount),
@@ -90,13 +125,15 @@ func (s State) String(db *DB, colors Colors) string {
 }
 
 func (s State) StringShort() string {
-	d := make([]string, 3, 4)
+	d := make([]string, 3, 5)
 	d[0] = fmt.Sprintf("mode:%s", s.Mode)
 	d[1] = fmt.Sprintf("set:%s", s.FilterSet)
 	d[2] = fmt.Sprintf("selected:%d", len(s.Selection))
-	d = append(d, string(s.Mode))
 	if len(s.Options) != 0 {
 		d = append(d, fmt.Sprintf("options:%d", len(s.Options)))
+	}
+	if len(s.Tags) != 0 {
+		d = append(d, fmt.Sprintf("tags:%s", strings.Join(s.Tags, ",")))
 	}
 	return strings.Join(d, " ")
 }
@@ -145,10 +182,21 @@ func (t newTags) Slice() []string {
 	return n
 }
 
+func (t newTags) Add(tags ...string) {
+	for _, tag := range tags {
+		t[tag] = struct{}{}
+	}
+}
+func (t newTags) Del(tags ...string) {
+	for _, tag := range tags {
+		delete(t, tag)
+	}
+}
+
 type Tagging struct {
 	*Card
 	tagsAdd newTags
-	tagsRem newTags
+	tagsDel newTags
 }
 
 func NewTagging(c *Card) Tagging {
@@ -161,21 +209,21 @@ func NewTagging(c *Card) Tagging {
 
 func (t Tagging) Add(add bool, tag string) {
 	if add {
-		t.tagsAdd[tag] = struct{}{}
-		delete(t.tagsRem, tag)
+		t.tagsAdd.Add(tag)
+		t.tagsDel.Del(tag)
 		return
 	}
-	t.tagsRem[tag] = struct{}{}
-	delete(t.tagsAdd, tag)
+	t.tagsDel.Add(tag)
+	t.tagsAdd.Del(tag)
 }
 
 func (t Tagging) Commit() {
-	t.Card.Untag(t.tagsRem.Slice())
+	t.Card.Untag(t.tagsDel.Slice())
 	t.Card.Tag(t.tagsAdd.Slice())
 }
 
 func (t Tagging) NewTags() (added []string, removed []string) {
-	added, removed = t.tagsAdd.Slice(), t.tagsRem.Slice()
+	added, removed = t.tagsAdd.Slice(), t.tagsDel.Slice()
 	return
 }
 

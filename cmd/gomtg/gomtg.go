@@ -534,7 +534,11 @@ ignored if -ia is passed. {fn} is replaced by the filename and {pid} with the pr
 			return
 		}
 		modifyState(true, func(s State) State {
-			s.Selection = append(s.Selection, cards...)
+			sel := NewSelection(cards)
+			for i := range sel {
+				sel[i].Tags.Add(state.Tags...)
+			}
+			s.Selection = append(s.Selection, sel...)
 			return s
 		})
 
@@ -596,9 +600,11 @@ ignored if -ia is passed. {fn} is replaced by the filename and {pid} with the pr
 			print("/undo   | /u                  remove last item from queue")
 			print("/images | /imgs               create a collage of all cards in current list")
 			print("/image  | /img <uuid>         show card image for card with (partial) UUID <uuid>")
-			print("/tag  {+|-}<tag>,…            tag/untag cards in collection with <tag>")
-			print("                              filter your collection (/mode collection)")
-			print("                              and add / remove tags")
+			print("/tag  {+|-}<tag>,…            tag/untag cards in collection with <tag> or tag all future cards added with <tag>")
+			print("                                - mode:collection: filter your collection (/mode collection)")
+			print("                                                   and add / remove tags")
+			print("                                - mode:add:        set tags to be added for each card added to your collection")
+			print("                                                   -<tag> does nothing")
 			print("                              e.g.: +nm -played +shoebox")
 			print("/commit                       commit selection to file (empties selection)")
 			print("/mode   | /m <mode>           enter <mode>")
@@ -632,7 +638,9 @@ ignored if -ia is passed. {fn} is replaced by the filename and {pid} with the pr
 				queue[i].Selection = nil
 			}
 			for _, c := range selection {
-				db.AddMTGJSON(c)
+				dbCard := FromCard(db, c.Card)
+				dbCard.Tag(c.Tags.Slice())
+				db.Add(dbCard)
 			}
 
 			tags := state.Tagging
@@ -799,32 +807,62 @@ ignored if -ia is passed. {fn} is replaced by the filename and {pid} with the pr
 			if len(state.Selection) == 0 {
 				return errors.New("nothing to repeat")
 			}
-			addToCollection(state.Selection[len(state.Selection)-1:])
+			addToCollection(state.Selection[len(state.Selection)-1:].Cards())
 
 			return nil
 		},
 		"tag": func(args []string) error {
-			if state.Mode != ModeCollection {
-				return errors.New("/tags can only be called from /mode collection")
-			}
-			tags := make([]Tagging, 0, len(args))
-			for _, arg := range args {
-				if len(arg) < 2 || (arg[0] != '-' && arg[0] != '+') {
-					return fmt.Errorf("'%s' is no a valid tag specifier", arg)
-				}
-				for _, c := range state.Local {
-					t := NewTagging(c.Card)
-					t.Add(arg[0] == '+', arg[1:])
-					tags = append(tags, t)
-				}
+			if len(args) == 0 && state.Mode != ModeCollection {
+				modifyState(true, func(s State) State {
+					s.Tags = nil
+					return s
+				})
 			}
 
-			modifyState(true, func(s State) State {
-				s.Tagging = append(s.Tagging, tags...)
-				return s
-			})
+			if state.Mode != ModeCollection && state.Mode != ModeAdd {
+				return errors.New("/tags can only be called from /mode collection or /mode add")
+			}
 
-			printAlert(fmt.Sprintf("Updated %d card(s)", len(state.Local)))
+			switch state.Mode {
+			case ModeCollection:
+				tags := make([]Tagging, 0, len(args))
+				for _, arg := range args {
+					if len(arg) < 2 || (arg[0] != '-' && arg[0] != '+') {
+						return fmt.Errorf("'%s' is no a valid tag specifier", arg)
+					}
+					for _, c := range state.Local {
+						t := NewTagging(c.Card)
+						t.Add(arg[0] == '+', arg[1:])
+						tags = append(tags, t)
+					}
+				}
+
+				if len(tags) == 0 {
+					return nil
+				}
+
+				modifyState(true, func(s State) State {
+					s.Tagging = append(s.Tagging, tags...)
+					return s
+				})
+
+				printAlert(fmt.Sprintf("Updated %d card(s)", len(state.Local)))
+			case ModeAdd:
+				tags := make([]string, 0, len(args))
+				for _, arg := range args {
+					if len(arg) < 2 || (arg[0] != '-' && arg[0] != '+') {
+						return fmt.Errorf("'%s' is no a valid tag specifier", arg)
+					}
+					if arg[0] == '+' {
+						tags = append(tags, arg[1:])
+					}
+				}
+				modifyState(true, func(s State) State {
+					s.Tags = tags
+					return s
+				})
+			}
+
 			return nil
 		},
 	}
