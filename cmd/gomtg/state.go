@@ -85,14 +85,14 @@ func (s State) Equal(o State) bool {
 	return true
 }
 
-func (s State) String(db *DB, colors Colors) string {
+func (s State) String(db *DB, colors Colors, getPricing getPricing) string {
 	data := []string{s.StringShort()}
 	for _, c := range s.Selection {
 		data = append(
 			data,
 			fmt.Sprintf(
 				"  \u2514 %s",
-				cardsString(db, []mtgjson.Card{c.Card}, colors, false)[0],
+				cardsString(db, []mtgjson.Card{c.Card}, getPricing, colors, false)[0],
 			),
 		)
 	}

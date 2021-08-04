@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"sort"
+	"time"
 
 	"github.com/frizinak/gomtg/mtgjson"
 )
@@ -43,19 +44,29 @@ func (t Tags) Del(s []string) bool {
 }
 
 type Card struct {
-	db    *DB
-	name  string
-	uuid  mtgjson.UUID
-	setID mtgjson.SetID
-	tags  Tags
-	del   bool
+	db      *DB
+	name    string
+	uuid    mtgjson.UUID
+	setID   mtgjson.SetID
+	tags    Tags
+	del     bool
+	pricing Pricing
+}
+
+type Pricing struct {
+	T       time.Time `json:"t"`
+	EUR     float64   `json:"eur"`
+	EURFoil float64   `json:"eur_foil,omitempty"`
+	USD     float64   `json:"usd"`
+	USDFoil float64   `json:"usd_foil,omitempty"`
 }
 
 type jsonCard struct {
-	Name  string        `json:"name"`
-	UUID  mtgjson.UUID  `json:"uuid"`
-	SetID mtgjson.SetID `json:"set_id"`
-	Tags  []string      `json:"tags"`
+	Name    string        `json:"name"`
+	UUID    mtgjson.UUID  `json:"uuid"`
+	SetID   mtgjson.SetID `json:"set_id"`
+	Tags    []string      `json:"tags"`
+	Pricing Pricing       `json:"price"`
 }
 
 func (c *Card) Name() string         { return c.name }
@@ -72,6 +83,15 @@ func (c *Card) Untag(tags []string) {
 	changed := c.tags.Del(tags)
 	c.db.save = c.db.save || changed
 }
+
+func (c *Card) SetPricing(p Pricing) {
+	if c.pricing != p {
+		c.pricing = p
+		c.db.save = true
+	}
+}
+
+func (c *Card) Pricing() Pricing { return c.pricing }
 
 func FromCard(db *DB, c mtgjson.Card) *Card {
 	return &Card{
@@ -140,6 +160,7 @@ func (db *DB) Save(file string) error {
 			c.uuid,
 			c.setID,
 			c.Tags(),
+			c.pricing,
 		}
 		if err := enc.Encode(jc); err != nil {
 			f.Close()
@@ -179,6 +200,7 @@ func LoadDB(file string) (*DB, error) {
 			jc.SetID,
 			tags,
 			false,
+			jc.Pricing,
 		}
 		db.Add(c)
 	}

@@ -327,7 +327,7 @@ func genImages(cards []mtgjson.Card, file string, getImage ImageGetter, progress
 		go func() {
 			for j := range work {
 				if gerr != nil {
-					break
+					continue
 				}
 				img, err := getImage(j.url)
 				if err != nil {
