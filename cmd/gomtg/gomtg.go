@@ -338,7 +338,7 @@ ignored if -ia is passed. {fn} is replaced by the filename and {pid} with the pr
 	cleanup := func() {
 		fmt.Println("\033[?25h")
 		killViewer()
-		locker.Unlock()
+		_ = locker.Unlock()
 	}
 	bye := func() {
 		cleanup()

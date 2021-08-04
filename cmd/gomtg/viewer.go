@@ -92,7 +92,7 @@ func spawnViewer(cmd, refreshCmd string, autoReload bool, path string) error {
 	imageViewerMutex.Unlock()
 
 	go func() {
-		imageViewerProcess.Wait()
+		_ = imageViewerProcess.Wait()
 		imageViewerMutex.Lock()
 		imageViewerProcess = nil
 		imageViewerRunning = false
@@ -104,6 +104,6 @@ func spawnViewer(cmd, refreshCmd string, autoReload bool, path string) error {
 
 func killViewer() {
 	if imageViewerProcess != nil && imageViewerProcess.Process != nil {
-		imageViewerProcess.Process.Kill()
+		_ = imageViewerProcess.Process.Kill()
 	}
 }
