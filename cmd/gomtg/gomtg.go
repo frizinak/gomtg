@@ -981,6 +981,13 @@ ignored if -ia is passed. {fn} is replaced by the filename and {pid} with the pr
 				return
 			}
 
+			const max = 20
+			skip := len(options) - max
+			if len(options) > max && line == "" {
+				printAlert(fmt.Sprintf("Skipping %d cards, last %d:", skip, max))
+				options = options[len(options)-max:]
+			}
+
 			roptions := make([]mtgjson.Card, 0, len(options))
 			for _, c := range options {
 				rc, ok := cardByUUID(c.UUID())
