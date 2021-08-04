@@ -25,3 +25,11 @@ wait for a binary release
     could be powerful enough to keep track of decks, multiple owners etc...
 - [x] card and collection prices
 
+## Thanks
+
+- https://golang.org
+- https://github.com/google/shlex
+- https://github.com/nightlyone/lockfile
+- Data: https://mtgjson.com/
+- API (pricing and images): https://api.scryfall.com
+- API (fallback images): https://gatherer.wizards.com
