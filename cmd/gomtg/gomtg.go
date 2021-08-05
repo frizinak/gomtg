@@ -1503,12 +1503,15 @@ ignored if -ia is passed. {fn} is replaced by the filename and {pid} with the pr
 		}
 		const delay = time.Second * 1
 		go func() {
+			s := time.Millisecond * 30
 			for {
 				if state.Fast && time.Since(discardUntil) < 0 {
 					time.Sleep(delay)
 					print("\033[?25h")
 					fl()
+					continue
 				}
+				time.Sleep(s)
 			}
 		}()
 		for {
