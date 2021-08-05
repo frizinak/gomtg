@@ -43,6 +43,11 @@ func (t Tags) Del(s []string) bool {
 	return changed
 }
 
+func (t Tags) Contains(tag string) bool {
+	_, ok := t[tag]
+	return ok
+}
+
 type Card struct {
 	db      *DB
 	name    string
@@ -73,6 +78,7 @@ func (c *Card) Name() string         { return c.name }
 func (c *Card) UUID() mtgjson.UUID   { return c.uuid }
 func (c *Card) SetID() mtgjson.SetID { return c.setID }
 func (c *Card) Tags() []string       { return c.tags.Slice() }
+func (c *Card) HasTag(t string) bool { return c.tags.Contains(t) }
 
 func (c *Card) Tag(tags []string) {
 	changed := c.tags.Add(tags)
@@ -139,18 +145,18 @@ func (db *DB) CardAt(ix int) (*Card, bool) {
 	return db.data[ix], true
 }
 
-func (db *DB) Save(file string) error {
+func (db *DB) Save(file string) (bool, error) {
 	if !db.save {
 		_, err := os.Stat(file)
 		if err == nil {
-			return nil
+			return false, nil
 		}
 	}
 
 	tmp := file + ".tmp"
 	f, err := os.Create(tmp)
 	if err != nil {
-		return err
+		return true, err
 	}
 
 	enc := json.NewEncoder(f)
@@ -165,12 +171,17 @@ func (db *DB) Save(file string) error {
 		if err := enc.Encode(jc); err != nil {
 			f.Close()
 			os.Remove(tmp)
-			return err
+			return true, err
 		}
 	}
 
 	f.Close()
-	return os.Rename(tmp, file)
+	err = os.Rename(tmp, file)
+	if err != nil {
+		return true, err
+	}
+	db.save = false
+	return true, nil
 }
 
 func LoadDB(file string) (*DB, error) {

@@ -29,6 +29,7 @@ wait for a binary release
 
 - https://golang.org
 - https://github.com/google/shlex
+- https://github.com/mattn/go-runewidth
 - https://github.com/nightlyone/lockfile
 - Data: https://mtgjson.com/
 - API (pricing and images): https://api.scryfall.com

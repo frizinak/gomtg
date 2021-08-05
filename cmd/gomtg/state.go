@@ -86,7 +86,7 @@ func (s State) Equal(o State) bool {
 }
 
 func (s State) String(db *DB, colors Colors, getPricing getPricing) string {
-	data := []string{s.StringShort()}
+	data := []string{s.StringShort(colors)}
 	for _, c := range s.Selection {
 		data = append(
 			data,
@@ -124,18 +124,21 @@ func (s State) String(db *DB, colors Colors, getPricing getPricing) string {
 	return strings.Join(data, "\n")
 }
 
-func (s State) StringShort() string {
-	d := make([]string, 3, 5)
-	d[0] = fmt.Sprintf("mode:%s", s.Mode)
-	d[1] = fmt.Sprintf("set:%s", s.FilterSet)
-	d[2] = fmt.Sprintf("selected:%d", len(s.Selection))
+func (s State) StringShort(colors Colors) string {
+	clr := colors.Get("status")
+	modeClr := colors.Get("good")
+	d := make([]string, 2, 4)
+	d[0] = fmt.Sprintf("set:%s", s.FilterSet)
+	d[1] = fmt.Sprintf("selected:%d", len(s.Selection))
 	if len(s.Options) != 0 {
 		d = append(d, fmt.Sprintf("options:%d", len(s.Options)))
 	}
 	if len(s.Tags) != 0 {
 		d = append(d, fmt.Sprintf("tags:%s", strings.Join(s.Tags, ",")))
 	}
-	return strings.Join(d, " ")
+
+	mode := fmt.Sprintf("%s %s \033[0m", modeClr, strings.ToUpper(string(s.Mode)))
+	return fmt.Sprintf("%s %s %s \033[0m", mode, clr, strings.Join(d, " "))
 }
 
 type Mode string

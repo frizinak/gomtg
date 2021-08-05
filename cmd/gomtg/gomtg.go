@@ -21,6 +21,7 @@ import (
 	"github.com/frizinak/gomtg/fuzzy"
 	"github.com/frizinak/gomtg/mtgjson"
 	"github.com/frizinak/gomtg/skryfall"
+	"github.com/mattn/go-runewidth"
 	"github.com/nightlyone/lockfile"
 )
 
@@ -238,24 +239,47 @@ func localCardsString(db *DB, cards []LocalCard, getPricing getPricing, colors C
 	titlePad := strconv.Itoa(longestTitle)
 	bad := colors.Get("bad")
 
+	prices := make([][]byte, len(cards))
+	longestPrice := 0
+	for i := range prices {
+		pricing, ok := getPricing(cards[i].UUID(), false)
+		p := fmt.Sprintf("%.2f", pricing)
+		if pricing == 0 {
+			ok = false
+			p = "-"
+		}
+		if len(p) > longestPrice {
+			longestPrice = len(p)
+		}
+		b := make([]byte, len(p)+1)
+		copy(b[1:], p)
+		if ok {
+			b[0] = 1
+		}
+		prices[i] = b
+	}
+	pricePad := strconv.Itoa(longestPrice)
+
+	format := "%6d \u2502 %s \u2502 %-5s \u2502 %-4d \u2502 %-" +
+		titlePad + "s \u2502%s %" +
+		pricePad + "s \033[0m\u2502 %s"
+
 	for i, c := range cards {
 		tags := c.Tags()
 		tagstr := strings.Join(tags, ",")
-		pricing, ok := getPricing(c.UUID(), false)
 		pricingClr := ""
-		if !ok {
+		if prices[i][0] == 0 {
 			pricingClr = bad
 		}
-
 		l[i] = fmt.Sprintf(
-			"%6d \u2502 %s \u2502 %-5s \u2502 %-4d \u2502 %-"+titlePad+"s \u2502%s %-6.2f \033[0m\u2502 %s",
+			format,
 			c.Index+1,
 			uuids[i],
 			c.SetID(),
 			db.Count(c.UUID()),
 			c.Name(),
 			pricingClr,
-			pricing,
+			prices[i][1:],
 			tagstr,
 		)
 	}
@@ -330,7 +354,7 @@ ignored if -ia is passed. {fn} is replaced by the filename and {pid} with the pr
 	flag.StringVar(&colorStr, "c", colorStr, "change default colors (key:bg:fg:bold[,key:value...])")
 	flag.BoolVar(&testColors, "color-test", testColors, "test colors")
 	flag.BoolVar(&imageAutoView, "iav", false, "Show last added card in image viewer")
-	flag.BoolVar(&noPricing, "np", false, "Disable pricing cards")
+	flag.BoolVar(&noPricing, "np", false, "Disable automatically pricing newly added cards")
 	flag.StringVar(&currency, "currency", "EUR", "EUR or USD")
 	flag.Parse()
 
@@ -507,8 +531,24 @@ ignored if -ia is passed. {fn} is replaced by the filename and {pid} with the pr
 	state := State{Mode: ModeCollection}
 	output := make([]string, 1, 30)
 
+	csiRE := regexp.MustCompile(`\033\[.*?[a-z]`)
 	print := func(msg ...string) {
 		output = append(output, msg...)
+	}
+	printDiv := func() {
+		max := 0
+		for _, o := range output {
+			l := runewidth.StringWidth(csiRE.ReplaceAllString(o, ""))
+			if l > max {
+				max = l
+			}
+		}
+
+		n := make([]rune, max)
+		for i := range n {
+			n[i] = '_'
+		}
+		print(string(n))
 	}
 	printAlert := func(msg string) {
 		clr := colors.Get("good")
@@ -524,8 +564,7 @@ ignored if -ia is passed. {fn} is replaced by the filename and {pid} with the pr
 	}
 	flush := func() {
 		fmt.Print("\033[2J\033[0;0H")
-		clr := colors.Get("status")
-		output[0] = fmt.Sprintf("%s %s \033[0m\n", clr, state.StringShort())
+		output[0] = state.StringShort(colors) + "\n"
 		fmt.Print(strings.Join(output, "\n"))
 		output = make([]string, 1, 30)
 	}
@@ -576,17 +615,13 @@ ignored if -ia is passed. {fn} is replaced by the filename and {pid} with the pr
 		return
 	}
 
-	getFullPricing := func(uuid mtgjson.UUID, fetch bool) Pricing {
+	getFullPricing := func(uuid mtgjson.UUID, fetch bool, wait bool) Pricing {
 		p := Pricing{T: time.Now()}
 		c, ok := cardByUUID(uuid)
 		if !ok || c.Identifiers.ScryfallId == "" {
 			return p
 		}
 		id := c.Identifiers.ScryfallId
-		if noPricing {
-			return p
-		}
-
 		check := func() (Pricing, bool) {
 			v, ok := pricing[uuid]
 			if ok {
@@ -612,8 +647,10 @@ ignored if -ia is passed. {fn} is replaced by the filename and {pid} with the pr
 			return p
 		}
 
+		w := make(chan struct{}, 1)
 		go func() {
 			pricingMutex.Lock()
+			defer func() { w <- struct{}{} }()
 			defer pricingMutex.Unlock()
 			_, ok := check()
 			if ok {
@@ -630,12 +667,15 @@ ignored if -ia is passed. {fn} is replaced by the filename and {pid} with the pr
 			p.USDFoil = res.USDFoil()
 			pricing[uuid] = p
 		}()
+		if wait {
+			<-w
+		}
 
 		return p
 	}
 
 	getPricing := func(uuid mtgjson.UUID, fetch bool) (float64, bool) {
-		p := getFullPricing(uuid, fetch)
+		p := getFullPricing(uuid, fetch, false)
 		v := pricingValue(p)
 		return v, v != 0 && time.Since(p.T) <= skryfall.PricingOutdated
 	}
@@ -663,7 +703,7 @@ ignored if -ia is passed. {fn} is replaced by the filename and {pid} with the pr
 		})
 
 		for i := range cards {
-			getPricing(cards[i].UUID, true)
+			getPricing(cards[i].UUID, !noPricing)
 			times := 1
 			cut := len(lastAdded)
 			for j := len(lastAdded) - 1; j >= 0; j-- {
@@ -695,6 +735,60 @@ ignored if -ia is passed. {fn} is replaced by the filename and {pid} with the pr
 		}
 	}
 
+	partialUUID := func(str string) (mtgjson.Card, error) {
+		list := make([]mtgjson.Card, 0, 1)
+		add := func(c mtgjson.Card) error {
+			if !strings.Contains(
+				strings.ToLower(string(c.UUID)),
+				strings.ToLower(str),
+			) {
+				return nil
+			}
+
+			identical := true
+			var value mtgjson.UUID
+			for _, c := range list {
+				if value == "" {
+					value = c.UUID
+				}
+				if c.UUID != value {
+					identical = false
+					break
+				}
+			}
+
+			if len(list) > 0 {
+				if !identical {
+					return errors.New("multiple cards match")
+				}
+				return nil
+			}
+			list = append(list, c)
+			return nil
+		}
+
+		var match mtgjson.Card
+		for _, c := range state.Options {
+			if err := add(c); err != nil {
+				return match, err
+			}
+		}
+
+		if len(list) == 0 {
+			for _, c := range cards {
+				if err := add(c); err != nil {
+					return match, err
+				}
+			}
+		}
+
+		if len(list) == 0 {
+			return match, errors.New("no such card")
+		}
+
+		return list[0], nil
+	}
+
 	_commandQ := func([]string) error {
 		if len(queue) == 1 {
 			print("Queue is empty")
@@ -716,12 +810,12 @@ ignored if -ia is passed. {fn} is replaced by the filename and {pid} with the pr
 			print("/help                         this")
 			print("/exit   | /quit               quit")
 			print("/queue  | /q                  view operation queue")
-			print("/repeat | /r                  add last card again")
 			print("/sets  <filter>               print all known sets (optionally filtered)")
 			print("/undo   | /u                  remove last item from queue")
 			print("/images | /imgs               create a collage of all cards in current list")
 			print("/image  | /img <uuid>         show card image for card with (partial) UUID <uuid>")
 			print("/prices                       refresh pricing data (async) for cards in collection")
+			print("/price <uuid>                 show pricing for card with (partial) UUID")
 			print("/tag  {+|-}<tag>,…            tag/untag cards in collection with <tag> or tag all future cards added with <tag>")
 			print("                                - mode:collection: filter your collection (/mode collection)")
 			print("                                                   and add / remove tags")
@@ -733,7 +827,10 @@ ignored if -ia is passed. {fn} is replaced by the filename and {pid} with the pr
 			print("                                - add:           add cards by entering their name (fuzzy)")
 			print("                                - collection:    search your collection for cards")
 			print("                                                 by name (fuzzy) or a range (1,2,8-10)")
+			print("                                                 filter by tag with +<tag> to only include items with <tag>")
+			print("                                                                    -<tag> to exclude items with <tag>")
 			print("                                - search:        search all cards (fuzzy)")
+			print("/repeat | /r                  add last card again")
 			print("/set    | /s <set>            only operate on cards within the given set")
 			return nil
 		},
@@ -762,13 +859,12 @@ ignored if -ia is passed. {fn} is replaced by the filename and {pid} with the pr
 
 			for _, c := range selection {
 				dbCard := FromCard(db, c.Card)
-				//dbCard.SetPricing(getFullPricing(c.UUID, false))
 				dbCard.Tag(c.Tags.Slice())
 				db.Add(dbCard)
 			}
 
 			for _, c := range db.Cards() {
-				c.SetPricing(getFullPricing(c.UUID(), false))
+				c.SetPricing(getFullPricing(c.UUID(), false, false))
 			}
 
 			tags := state.Tagging
@@ -780,12 +876,17 @@ ignored if -ia is passed. {fn} is replaced by the filename and {pid} with the pr
 				t.Commit()
 			}
 
-			err := db.Save(dbFile)
+			saved, err := db.Save(dbFile)
 			if err != nil {
 				return err
 			}
 
 			rebuildLocalFuzz()
+			if !saved {
+				printErr(errors.New("nothing to commit"))
+				return nil
+			}
+			printAlert("all changes committed to database")
 			return nil
 		},
 		"sets": func(args []string) error {
@@ -818,55 +919,13 @@ ignored if -ia is passed. {fn} is replaced by the filename and {pid} with the pr
 				return errors.New("/img requires exactly 1 argument")
 			}
 
-			list := make([]mtgjson.Card, 0, 1)
+			list := make([]mtgjson.Card, 1)
 			arg := a[0]
-			add := func(c mtgjson.Card) error {
-				if !strings.Contains(
-					strings.ToLower(string(c.UUID)),
-					strings.ToLower(arg),
-				) {
-					return nil
-				}
-
-				identical := true
-				var value mtgjson.UUID
-				for _, c := range list {
-					if value == "" {
-						value = c.UUID
-					}
-					if c.UUID != value {
-						identical = false
-						break
-					}
-				}
-
-				if len(list) > 0 {
-					if !identical {
-						return errors.New("multiple cards match")
-					}
-					return nil
-				}
-				list = append(list, c)
-				return nil
+			card, err := partialUUID(arg)
+			if err != nil {
+				return err
 			}
-
-			for _, c := range state.Options {
-				if err := add(c); err != nil {
-					return err
-				}
-			}
-
-			if len(list) != 1 {
-				for _, c := range cards {
-					if err := add(c); err != nil {
-						return err
-					}
-				}
-			}
-
-			if len(list) == 0 {
-				return errors.New("no such card")
-			}
+			list[0] = card
 
 			listID := cardListID(list)
 			if lastImageListID != listID {
@@ -901,6 +960,10 @@ ignored if -ia is passed. {fn} is replaced by the filename and {pid} with the pr
 			}
 
 			modifyState(true, func(s State) State {
+				if s.Mode != m {
+					s.Local = nil
+					s.Options = nil
+				}
 				s.Mode = m
 				return s
 			})
@@ -948,6 +1011,19 @@ ignored if -ia is passed. {fn} is replaced by the filename and {pid} with the pr
 				getPricing(c.UUID(), true)
 			}
 
+			return nil
+		},
+		"price": func(a []string) error {
+			if len(a) != 1 || len(a[0]) == 0 {
+				return errors.New("/price requires exactly 1 argument")
+			}
+			card, err := partialUUID(a[0])
+			if err != nil {
+				return err
+			}
+
+			getFullPricing(card.UUID, true, true)
+			printOptions()
 			return nil
 		},
 		"tag": func(args []string) error {
@@ -1015,18 +1091,22 @@ ignored if -ia is passed. {fn} is replaced by the filename and {pid} with the pr
 	commands["q"] = commands["queue"]
 	commands["r"] = commands["repeat"]
 
-	handleCommand := func(f []string) (bool, error) {
+	var handleCommand func(f []string) (bool, error)
+	handleCommand = func(f []string) (bool, error) {
 		isCommand := false
 		if len(f) == 0 {
 			return false, nil
 		}
 
 		if strings.HasPrefix(f[0], "/") {
-			d := f[0][1:]
+			d := strings.TrimLeft(f[0], "/")
 			if cmd, ok := commands[d]; ok {
 				return true, cmd(f[1:])
 			}
-			return true, fmt.Errorf("no such command: '%s'", f[0])
+
+			handleCommand([]string{"/help"})
+			print("")
+			return true, fmt.Errorf("no such command: '/%s'", d)
 		}
 
 		return isCommand, nil
@@ -1049,29 +1129,67 @@ ignored if -ia is passed. {fn} is replaced by the filename and {pid} with the pr
 	}
 
 	numericRE := regexp.MustCompile(`^\d[\d,\- ]+$`)
-	searchLocal := func(qry string) ([]LocalCard, error) {
+	searchLocal := func(qry []string) ([]LocalCard, error) {
+		qryTags := make([]string, 0, len(qry))
+		qryNotTags := make([]string, 0, len(qry))
+		_qryStr := make([]string, 0, len(qry))
+		for _, p := range qry {
+			switch {
+			case len(p) == 0:
+				continue
+			case p[0] == '+':
+				qryTags = append(qryTags, p[1:])
+			case p[0] == '-':
+				qryNotTags = append(qryNotTags, p[1:])
+			default:
+				_qryStr = append(_qryStr, p)
+			}
+		}
+		qryStr := strings.Join(_qryStr, " ")
+
+		noTags := len(qryTags) == 0 && len(qryNotTags) == 0
+
 		filter := func(c *Card) bool {
 			return state.FilterSet == "" || c.SetID() == state.FilterSet
 		}
-		if qry == "" {
-			all := db.Cards()
-			list := make([]LocalCard, 0, len(all))
-			for i, c := range all {
-				if filter(c) {
-					list = append(list, NewLocalCard(c, i))
+
+		if !noTags {
+			ofilter := filter
+			filter = func(c *Card) bool {
+				if !ofilter(c) {
+					return false
 				}
+				for _, t := range qryTags {
+					if !c.HasTag(t) {
+						return false
+					}
+				}
+				for _, t := range qryNotTags {
+					if c.HasTag(t) {
+						return false
+					}
+				}
+				return true
 			}
-			return list, nil
 		}
 
 		search := func() []int {
-			return localFuzz.Search(qry, func(score, min, max int) bool {
+			return localFuzz.Search(qryStr, func(score, min, max int) bool {
 				return score > 0 && score == max
 			})
 		}
 
-		if numericRE.MatchString(qry) {
-			ints, ok := intRange(qry)
+		if qryStr == "" {
+			search = func() []int {
+				all := db.Cards()
+				list := make([]int, 0, len(all))
+				for i := range all {
+					list = append(list, i)
+				}
+				return list
+			}
+		} else if numericRE.MatchString(qryStr) {
+			ints, ok := intRange(qryStr)
 			if ok {
 				search = func() []int {
 					res := make([]int, len(ints))
@@ -1088,7 +1206,7 @@ ignored if -ia is passed. {fn} is replaced by the filename and {pid} with the pr
 		for _, ix := range res {
 			c, ok := db.CardAt(ix)
 			if !ok {
-				return list, errors.New(`Invalid item/range`)
+				continue
 			}
 			if filter(c) {
 				list = append(list, NewLocalCard(c, ix))
@@ -1110,7 +1228,7 @@ ignored if -ia is passed. {fn} is replaced by the filename and {pid} with the pr
 
 		switch state.Mode {
 		case ModeCollection:
-			options, err := searchLocal(line)
+			options, err := searchLocal(fields)
 			if err != nil {
 				printErr(err)
 				return
@@ -1121,9 +1239,10 @@ ignored if -ia is passed. {fn} is replaced by the filename and {pid} with the pr
 			}
 
 			const max = 20
-			skip := len(options) - max
+			skip := 0
+			total := len(options)
 			if len(options) > max && line == "" {
-				printAlert(fmt.Sprintf("Skipping %d cards, last %d:", skip, max))
+				skip = len(options) - max
 				options = options[len(options)-max:]
 			}
 
@@ -1141,6 +1260,17 @@ ignored if -ia is passed. {fn} is replaced by the filename and {pid} with the pr
 				return s
 			})
 			printOptions()
+			if skip > 0 {
+				printAlert(
+					fmt.Sprintf(
+						"Skipped %d cards, showing last %d (type 1-%d to show all)",
+						skip,
+						max,
+						total,
+					),
+				)
+			}
+
 			return
 
 		case ModeSearch:
@@ -1252,19 +1382,19 @@ ignored if -ia is passed. {fn} is replaced by the filename and {pid} with the pr
 	prompt := func() {
 		switch state.Mode {
 		case ModeAdd:
-			print("________________________________")
+			printDiv()
 			print("Search all and add to collection")
 			print("> ")
 		case ModeCollection:
-			print("_________________")
+			printDiv()
 			print("Search collection (card name or range)")
 			print("> ")
 		case ModeSearch:
-			print("__________")
+			printDiv()
 			print("Search all")
 			print("> ")
 		case ModeSelect:
-			print("_____________________________________")
+			printDiv()
 			print("Enter (partial) UUID to select a card")
 			listID := cardListID(state.Options)
 			if lastImageListID != listID {
@@ -1272,6 +1402,7 @@ ignored if -ia is passed. {fn} is replaced by the filename and {pid} with the pr
 			}
 			print("UUID > ")
 		default:
+			printDiv()
 			print("> ")
 		}
 		flush()
