@@ -745,10 +745,9 @@ ignored if -ia is passed. {fn} is replaced by the filename and {pid} with the pr
 		}
 		printAlert(
 			fmt.Sprintf(
-				"Skipped %d cards, showing last %d (type 1-%d to show all)",
+				"Skipped %d cards, showing last %d",
 				n-max,
 				max,
-				n,
 			),
 		)
 	}
