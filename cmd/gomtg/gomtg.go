@@ -271,8 +271,8 @@ func localCardsString(db *DB, cards []LocalCard, max int, getPricing getPricing,
 		if ok {
 			b[0] = 1
 			priceFails--
-			priceSum += pricing
 		}
+		priceSum += pricing
 		prices[i] = b
 	}
 	priceSumStr := fmt.Sprintf("%.2f", priceSum)
@@ -679,7 +679,7 @@ ignored if -ia is passed. {fn} is replaced by the filename and {pid} with the pr
 					return v, true
 				}
 			}
-			return p, false
+			return v, false
 		}
 
 		pricingMutex.RLock()
@@ -690,7 +690,7 @@ ignored if -ia is passed. {fn} is replaced by the filename and {pid} with the pr
 		}
 
 		if !fetch {
-			return p
+			return v
 		}
 
 		w := make(chan struct{}, 1)
