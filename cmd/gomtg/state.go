@@ -158,7 +158,7 @@ func (s State) String(db *DB, colors Colors, getPricing getPricing) string {
 			data,
 			fmt.Sprintf(
 				"  \u2514 %s",
-				cardsString(db, []mtgjson.Card{c.Card}, getPricing, colors, false)[0],
+				cardsString(db, []mtgjson.Card{c.Card}, 0, getPricing, colors, false)[0],
 			),
 		)
 	}

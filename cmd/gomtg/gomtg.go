@@ -178,8 +178,8 @@ func colorUniqUUID(uuids []string, colors Colors) []string {
 
 type getPricing func(uuid mtgjson.UUID, fetch bool) (float64, bool)
 
-func cardsString(db *DB, cards []mtgjson.Card, getPricing getPricing, colors Colors, uniq bool) []string {
-	l := make([]string, len(cards))
+func cardsString(db *DB, cards []mtgjson.Card, max int, getPricing getPricing, colors Colors, uniq bool) []string {
+	l := make([]string, 0, len(cards))
 	uuids := make([]string, len(cards))
 	for i, c := range cards {
 		uuids[i] = string(c.UUID)
@@ -199,28 +199,42 @@ func cardsString(db *DB, cards []mtgjson.Card, getPricing getPricing, colors Col
 	titlePad := strconv.Itoa(longestTitle)
 	bad := colors.Get("bad")
 
+	if max > 0 && len(cards) > max {
+		s := len(cards) - max
+		uuids = uuids[s:]
+		cards = cards[s:]
+	}
+
 	for i, c := range cards {
 		pricing, ok := getPricing(cards[i].UUID, false)
 		pricingClr := ""
 		if !ok {
 			pricingClr = bad
 		}
-		l[i] = fmt.Sprintf(
-			"%s \u2502 %-5s \u2502 %-4d \u2502 %-"+titlePad+"s \u2502%s %-.2f \033[0m",
-			uuids[i],
-			c.SetCode,
-			db.Count(c.UUID),
-			c.Name,
-			pricingClr,
-			pricing,
+		l = append(
+			l,
+			fmt.Sprintf(
+				"%s \u2502 %-5s \u2502 %-4d \u2502 %-"+titlePad+"s \u2502%s %-.2f \033[0m",
+				uuids[i],
+				c.SetCode,
+				db.Count(c.UUID),
+				c.Name,
+				pricingClr,
+				pricing,
+			),
 		)
 	}
 
 	return l
 }
 
-func localCardsString(db *DB, cards []LocalCard, getPricing getPricing, colors Colors, uniq bool) []string {
-	l := make([]string, len(cards))
+var csiRE = regexp.MustCompile(`\033\[.*?[a-z]`)
+
+func localCardsString(db *DB, cards []LocalCard, max int, getPricing getPricing, colors Colors, uniq bool) []string {
+	if len(cards) == 0 {
+		return nil
+	}
+	l := make([]string, 0, len(cards)+1)
 	uuids := make([]string, len(cards))
 	for i, c := range cards {
 		uuids[i] = string(c.UUID())
@@ -240,8 +254,10 @@ func localCardsString(db *DB, cards []LocalCard, getPricing getPricing, colors C
 	titlePad := strconv.Itoa(longestTitle)
 	bad := colors.Get("bad")
 
+	priceSum := 0.0
+	priceFails := len(cards)
 	prices := make([][]byte, len(cards))
-	longestPrice := 0
+	//longestPrice := 0
 	for i := range prices {
 		pricing, ok := getPricing(cards[i].UUID(), false)
 		p := fmt.Sprintf("%.2f", pricing)
@@ -249,22 +265,29 @@ func localCardsString(db *DB, cards []LocalCard, getPricing getPricing, colors C
 			ok = false
 			p = "-"
 		}
-		if len(p) > longestPrice {
-			longestPrice = len(p)
-		}
 		b := make([]byte, len(p)+1)
 		copy(b[1:], p)
 		if ok {
 			b[0] = 1
+			priceFails--
+			priceSum += pricing
 		}
 		prices[i] = b
 	}
-	pricePad := strconv.Itoa(longestPrice)
+	priceSumStr := fmt.Sprintf("%.2f", priceSum)
+	pricePad := strconv.Itoa(len(priceSumStr))
 
-	format := "%6d \u2502 %s \u2502 %-5s \u2502 %-4d \u2502 %-" +
-		titlePad + "s \u2502%s %" +
-		pricePad + "s \033[0m\u2502 %s"
+	p1 := "%6d \u2502 %s \u2502 %-5s \u2502 %-4d \u2502 %-" +
+		titlePad + "s "
+	p2 := "\u2502%s %" + pricePad + "s \033[0m\u2502 %s"
 
+	p1Len := 0
+	if max > 0 && len(cards) > max {
+		s := len(cards) - max
+		uuids = uuids[s:]
+		prices = prices[s:]
+		cards = cards[s:]
+	}
 	for i, c := range cards {
 		tags := c.Tags()
 		tagstr := strings.Join(tags, ",")
@@ -272,18 +295,36 @@ func localCardsString(db *DB, cards []LocalCard, getPricing getPricing, colors C
 		if prices[i][0] == 0 {
 			pricingClr = bad
 		}
-		l[i] = fmt.Sprintf(
-			format,
-			c.Index+1,
-			uuids[i],
-			c.SetID(),
-			db.Count(c.UUID()),
-			c.Name(),
-			pricingClr,
-			prices[i][1:],
-			tagstr,
-		)
+		items := []string{
+			fmt.Sprintf(
+				p1,
+				c.Index+1,
+				uuids[i],
+				c.SetID(),
+				db.Count(c.UUID()),
+				c.Name(),
+			),
+			fmt.Sprintf(
+				p2,
+				pricingClr,
+				prices[i][1:],
+				tagstr,
+			),
+		}
+		if p1Len == 0 {
+			p1Len = runewidth.StringWidth(csiRE.ReplaceAllString(items[0], ""))
+		}
+
+		l = append(l, strings.Join(items, ""))
 	}
+
+	pricingClr := colors.Get("good")
+	if priceFails != 0 {
+		pricingClr = bad
+	}
+	formatTotal := "%" + strconv.Itoa(p1Len) + "s\u2502%s %.2f \033[0m\u2502"
+	l = append(l, fmt.Sprintf(formatTotal, "", pricingClr, priceSum))
+
 	return l
 }
 
@@ -391,6 +432,7 @@ ignored if -ia is passed. {fn} is replaced by the filename and {pid} with the pr
 
 	skry := skryfall.New(nil, time.Second*10)
 	pricing := make(map[mtgjson.UUID]Pricing)
+	pricingBusy := make(map[mtgjson.UUID]struct{})
 	var pricingMutex sync.RWMutex
 	pricingValue := func(p Pricing) float64 { return p.EUR }
 	if currency != "eur" {
@@ -532,7 +574,6 @@ ignored if -ia is passed. {fn} is replaced by the filename and {pid} with the pr
 	state := State{Mode: ModeCollection, Sort: SortIndex}
 	output := make([]string, 1, 30)
 
-	csiRE := regexp.MustCompile(`\033\[.*?[a-z]`)
 	print := func(msg ...string) {
 		output = append(output, msg...)
 	}
@@ -650,22 +691,39 @@ ignored if -ia is passed. {fn} is replaced by the filename and {pid} with the pr
 
 		w := make(chan struct{}, 1)
 		go func() {
-			pricingMutex.Lock()
 			defer func() { w <- struct{}{} }()
-			defer pricingMutex.Unlock()
-			_, ok := check()
-			if ok {
+
+			fetch := func() bool {
+				pricingMutex.Lock()
+				defer pricingMutex.Unlock()
+				if _, ok := pricingBusy[uuid]; ok {
+					return false
+				}
+				if _, ok := check(); ok {
+					return false
+				}
+				pricingBusy[uuid] = struct{}{}
+				return true
+			}()
+
+			if !fetch {
 				return
 			}
+
 			res, err := skry.Card(id)
+			pricingMutex.Lock()
+			defer pricingMutex.Unlock()
+			delete(pricingBusy, uuid)
 			if err != nil {
 				pricing[uuid] = p
+				return
 			}
 
 			p.EUR = res.EUR()
 			p.USD = res.USD()
 			p.EURFoil = res.EURFoil()
 			p.USDFoil = res.USDFoil()
+
 			pricing[uuid] = p
 		}()
 		if wait {
@@ -681,14 +739,30 @@ ignored if -ia is passed. {fn} is replaced by the filename and {pid} with the pr
 		return v, v != 0 && time.Since(p.T) <= skryfall.PricingOutdated
 	}
 
-	printOptions := func() {
+	printSkipped := func(n, max int) {
+		if max == 0 || n <= max {
+			return
+		}
+		printAlert(
+			fmt.Sprintf(
+				"Skipped %d cards, showing last %d (type 1-%d to show all)",
+				n-max,
+				max,
+				n,
+			),
+		)
+	}
+
+	printOptions := func(max int) {
 		if state.Mode == ModeCollection {
 			state.SortLocal(getPricing)
-			print(localCardsString(db, state.Local, getPricing, colors, true)...)
+			print(localCardsString(db, state.Local, max, getPricing, colors, true)...)
+			printSkipped(len(state.Local), max)
 			return
 		}
 		state.SortOptions(getPricing)
-		print(cardsString(db, state.Options, getPricing, colors, true)...)
+		print(cardsString(db, state.Options, max, getPricing, colors, true)...)
+		printSkipped(len(state.Options), max)
 	}
 
 	lastAdded := make([]mtgjson.Card, 0)
@@ -903,7 +977,7 @@ ignored if -ia is passed. {fn} is replaced by the filename and {pid} with the pr
 			}
 			listID := cardListID(state.Options)
 			if lastImageListID == listID {
-				printOptions()
+				printOptions(0)
 				return spawnViewer(imageCommand, imageRefreshCommand, imageAutoReload, imagePath)
 			}
 			err := genImages(state.Options, imagePath, imageGetter, func(i, total int) {
@@ -914,7 +988,7 @@ ignored if -ia is passed. {fn} is replaced by the filename and {pid} with the pr
 				return err
 			}
 			lastImageListID = listID
-			printOptions()
+			printOptions(0)
 			printAlert(fmt.Sprintf("Downloaded image to '%s'", imagePath))
 			return spawnViewer(imageCommand, imageRefreshCommand, imageAutoReload, imagePath)
 		},
@@ -940,7 +1014,7 @@ ignored if -ia is passed. {fn} is replaced by the filename and {pid} with the pr
 				lastImageListID = listID
 			}
 
-			printOptions()
+			printOptions(0)
 			printAlert(fmt.Sprintf("Downloaded image to '%s'", imagePath))
 			return spawnViewer(imageCommand, imageRefreshCommand, imageAutoReload, imagePath)
 		},
@@ -1008,7 +1082,7 @@ ignored if -ia is passed. {fn} is replaced by the filename and {pid} with the pr
 					s.Sort = SortIndex
 					return s
 				})
-				printOptions()
+				printOptions(0)
 				return nil
 			}
 			sorting := Sort(arg)
@@ -1025,7 +1099,7 @@ ignored if -ia is passed. {fn} is replaced by the filename and {pid} with the pr
 				return s
 			})
 
-			printOptions()
+			printOptions(0)
 			return nil
 		},
 		"repeat": func([]string) error {
@@ -1056,8 +1130,18 @@ ignored if -ia is passed. {fn} is replaced by the filename and {pid} with the pr
 				return err
 			}
 
-			getFullPricing(card.UUID, true, true)
-			printOptions()
+			o := getFullPricing(card.UUID, false, true)
+			n := getFullPricing(card.UUID, true, true)
+			_, ok := getPricing(card.UUID, false)
+			if !ok {
+				return errors.New("failed to fetch price")
+			}
+			if n.T == o.T {
+				printAlert("price already up to date")
+				return nil
+			}
+			printAlert("price updated")
+
 			return nil
 		},
 		"tag": func(args []string) error {
@@ -1272,13 +1356,17 @@ ignored if -ia is passed. {fn} is replaced by the filename and {pid} with the pr
 				return
 			}
 
-			const max = 20
-			skip := 0
-			total := len(options)
-			if len(options) > max && line == "" {
-				skip = len(options) - max
-				options = options[len(options)-max:]
+			max := 20
+			if line != "" {
+				max = 0
 			}
+			// const max = 20
+			// skip := 0
+			// total := len(options)
+			// if len(options) > max && line == "" {
+			// 	skip = len(options) - max
+			// 	//options = options[len(options)-max:]
+			// }
 
 			roptions := make([]mtgjson.Card, 0, len(options))
 			for _, c := range options {
@@ -1293,23 +1381,13 @@ ignored if -ia is passed. {fn} is replaced by the filename and {pid} with the pr
 				s.Options = roptions
 				return s
 			})
-			printOptions()
-			if skip > 0 {
-				printAlert(
-					fmt.Sprintf(
-						"Skipped %d cards, showing last %d (type 1-%d to show all)",
-						skip,
-						max,
-						total,
-					),
-				)
-			}
+			printOptions(max)
 
 			return
 
 		case ModeSearch:
 			if line == "" {
-				printOptions()
+				printOptions(0)
 				return
 			}
 			options := searchAll(line)
@@ -1321,7 +1399,7 @@ ignored if -ia is passed. {fn} is replaced by the filename and {pid} with the pr
 					s.Options = options
 					return s
 				})
-				printOptions()
+				printOptions(0)
 				return
 			}
 
@@ -1344,7 +1422,7 @@ ignored if -ia is passed. {fn} is replaced by the filename and {pid} with the pr
 					s.Mode = ModeSelect
 					return s
 				})
-				printOptions()
+				printOptions(0)
 				return
 			}
 
@@ -1360,13 +1438,13 @@ ignored if -ia is passed. {fn} is replaced by the filename and {pid} with the pr
 			}
 
 			if len(sel) > 1 {
-				printOptions()
+				printOptions(0)
 				if line != "" {
 					printErr(errors.New("multiple matches, try more specific query"))
 				}
 				return
 			} else if len(sel) == 0 {
-				printOptions()
+				printOptions(0)
 				printErr(errors.New("no card matches that uuid"))
 				return
 			}

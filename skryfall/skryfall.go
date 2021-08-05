@@ -52,6 +52,7 @@ func (p Prices) USDFoil() float64 { return p.conv(p.RawUSDFoil) }
 type API struct {
 	c       *http.Client
 	timeout time.Duration
+	rate    chan struct{}
 }
 
 func New(c *http.Client, timeout time.Duration) *API {
@@ -61,10 +62,12 @@ func New(c *http.Client, timeout time.Duration) *API {
 	if timeout == 0 {
 		timeout = time.Second * 30
 	}
-	return &API{c, timeout}
+	return &API{c, timeout, make(chan struct{}, 1)}
 }
 
 func (api *API) Card(id string) (Card, error) {
+	api.rate <- struct{}{}
+	defer func() { <-api.rate }()
 	var card Card
 
 	ctx, cancel := context.WithDeadline(context.Background(), time.Now().Add(api.timeout))
