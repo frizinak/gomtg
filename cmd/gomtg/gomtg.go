@@ -215,6 +215,7 @@ func cardsString(db *DB, cards []mtgjson.Card, getPricing getPricing, colors Col
 			pricing,
 		)
 	}
+
 	return l
 }
 
@@ -528,7 +529,7 @@ ignored if -ia is passed. {fn} is replaced by the filename and {pid} with the pr
 		return nil
 	}))
 
-	state := State{Mode: ModeCollection}
+	state := State{Mode: ModeCollection, Sort: SortIndex}
 	output := make([]string, 1, 30)
 
 	csiRE := regexp.MustCompile(`\033\[.*?[a-z]`)
@@ -682,9 +683,11 @@ ignored if -ia is passed. {fn} is replaced by the filename and {pid} with the pr
 
 	printOptions := func() {
 		if state.Mode == ModeCollection {
+			state.SortLocal(getPricing)
 			print(localCardsString(db, state.Local, getPricing, colors, true)...)
 			return
 		}
+		state.SortOptions(getPricing)
 		print(cardsString(db, state.Options, getPricing, colors, true)...)
 	}
 
@@ -810,7 +813,8 @@ ignored if -ia is passed. {fn} is replaced by the filename and {pid} with the pr
 			print("/help                         this")
 			print("/exit   | /quit               quit")
 			print("/queue  | /q                  view operation queue")
-			print("/sets  <filter>               print all known sets (optionally filtered)")
+			print("/sets <filter>                print all known sets (optionally filtered)")
+			print("/sort <sort>                  sort items by index, name or price")
 			print("/undo   | /u                  remove last item from queue")
 			print("/images | /imgs               create a collage of all cards in current list")
 			print("/image  | /img <uuid>         show card image for card with (partial) UUID <uuid>")
@@ -992,6 +996,36 @@ ignored if -ia is passed. {fn} is replaced by the filename and {pid} with the pr
 				s.FilterSet = fs
 				return s
 			})
+			return nil
+		},
+		"sort": func(args []string) error {
+			arg := ""
+			if len(args) > 0 {
+				arg = args[0]
+			}
+			if arg == "" {
+				modifyState(true, func(s State) State {
+					s.Sort = SortIndex
+					return s
+				})
+				printOptions()
+				return nil
+			}
+			sorting := Sort(arg)
+			if !sorting.Valid() {
+				opts := make([]string, 0, len(Sorts))
+				for i := range Sorts {
+					opts = append(opts, string(i))
+				}
+				sort.Strings(opts)
+				return fmt.Errorf("'%s' is not a valid sort [%s]", arg, strings.Join(opts, ", "))
+			}
+			modifyState(true, func(s State) State {
+				s.Sort = sorting
+				return s
+			})
+
+			printOptions()
 			return nil
 		},
 		"repeat": func([]string) error {

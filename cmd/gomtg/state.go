@@ -14,11 +14,77 @@ type State struct {
 	FilterSet  mtgjson.SetID
 	Options    []mtgjson.Card
 	Local      []LocalCard
+	Sort       Sort
 	Tags       []string
 	PageOffset int
 
 	Selection Selection
 	Tagging   []Tagging
+}
+
+func (s State) SortLocal(getPricing getPricing) {
+	sorter := NewSortable(func(i, j int) {
+		s.Local[i], s.Local[j] = s.Local[j], s.Local[i]
+	})
+	ints, strs := make([]int, 0), make([]string, 0)
+	switch s.Sort {
+	case SortName:
+		for _, c := range s.Local {
+			strs = append(strs, c.Name())
+		}
+	case SortPrice:
+		for _, c := range s.Local {
+			p, _ := getPricing(c.UUID(), false)
+			ints = append(ints, int(p*100))
+		}
+	default:
+		for _, c := range s.Local {
+			ints = append(ints, c.Index)
+		}
+	}
+
+	sorter.SetData(ints, strs)
+	sorter.Sort()
+}
+
+func (s State) SortOptions(getPricing getPricing) {
+	sorter := NewSortable(func(i, j int) {
+		s.Options[i], s.Options[j] = s.Options[j], s.Options[i]
+	})
+	ints, strs := make([]int, 0), make([]string, 0)
+	switch s.Sort {
+	case SortPrice:
+		for _, c := range s.Options {
+			p, _ := getPricing(c.UUID, false)
+			ints = append(ints, int(p*100))
+		}
+	default:
+		for _, c := range s.Options {
+			strs = append(strs, c.Name)
+		}
+	}
+
+	sorter.SetData(ints, strs)
+	sorter.Sort()
+}
+
+type Sort string
+
+const (
+	SortIndex Sort = "index"
+	SortName  Sort = "name"
+	SortPrice Sort = "price"
+)
+
+var Sorts = map[Sort]struct{}{
+	SortIndex: {},
+	SortName:  {},
+	SortPrice: {},
+}
+
+func (s Sort) Valid() bool {
+	_, ok := Sorts[s]
+	return ok
 }
 
 type Selection []Select
