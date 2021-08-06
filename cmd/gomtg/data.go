@@ -10,7 +10,7 @@ import (
 func loadData(file string) (mtgjson.AllPrintings, error) {
 	if _, err := os.Stat(file); err != nil {
 		destJSON := file + ".json"
-		err := progress("Download mgtjson.com data", func() error {
+		err := progress("Download mtgjson.com data", func() error {
 			w, err := os.Create(destJSON)
 			if err != nil {
 				return err
