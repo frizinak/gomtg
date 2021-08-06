@@ -19,6 +19,8 @@ type State struct {
 	PageOffset int
 	Fast       bool
 
+	Filtered bool
+
 	Selection Selection
 	Tagging   []Tagging
 }
@@ -152,17 +154,17 @@ func (s State) Equal(o State) bool {
 	return true
 }
 
-func (s State) String(db *DB, colors Colors, getPricing getPricing) string {
+func (s State) String(db *DB, colors Colors, getPricing getPricing) []string {
 	data := []string{s.StringShort(colors)}
-	for _, c := range s.Selection {
-		data = append(
-			data,
-			fmt.Sprintf(
-				"  \u2514 %s",
-				cardsString(db, []mtgjson.Card{c.Card}, 0, getPricing, colors, false)[0],
-			),
-		)
+	selCards := make([]mtgjson.Card, len(s.Selection))
+	for i, c := range s.Selection {
+		selCards[i] = c.Card
 	}
+	cardsStrs := cardsString(db, selCards, 0, getPricing, colors, false)
+	for i := range cardsStrs {
+		cardsStrs[i] = fmt.Sprintf(" \u2514 %s", cardsStrs[i])
+	}
+	data = append(data, cardsStrs...)
 
 	tagsAdd := make(map[string]int)
 	tagsDel := make(map[string]int)
@@ -188,7 +190,7 @@ func (s State) String(db *DB, colors Colors, getPricing getPricing) string {
 		)
 	}
 
-	return strings.Join(data, "\n")
+	return data
 }
 
 func (s State) StringShort(colors Colors) string {

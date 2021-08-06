@@ -756,7 +756,16 @@ ignored if -ia is passed. {fn} is replaced by the filename and {pid} with the pr
 		)
 	}
 
-	printOptions := func(max int) {
+	printOptions := func() {
+		max := 0
+		if !state.Filtered {
+			max = 20
+			dims, err := term.Size()
+			h := int(dims.Height - 10)
+			if err == nil && h > max {
+				max = h
+			}
+		}
 		if state.Mode == ModeCollection {
 			state.SortLocal(getPricing)
 			print(localCardsString(db, state.Local, max, getPricing, colors, true)...)
@@ -875,7 +884,12 @@ ignored if -ia is passed. {fn} is replaced by the filename and {pid} with the pr
 			return nil
 		}
 		for _, s := range queue[1:] {
-			print("- " + s.String(db, colors, getPricing))
+			str := s.String(db, colors, getPricing)
+			if len(str) == 0 {
+				continue
+			}
+			print("- " + str[0])
+			print(str[1:]...)
 		}
 		return nil
 	}
@@ -980,7 +994,7 @@ ignored if -ia is passed. {fn} is replaced by the filename and {pid} with the pr
 			}
 			listID := cardListID(state.Options)
 			if lastImageListID == listID {
-				printOptions(0)
+				printOptions()
 				return spawnViewer(imageCommand, imageRefreshCommand, imageAutoReload, imagePath)
 			}
 			err := genImages(state.Options, imagePath, imageGetter, func(i, total int) {
@@ -991,7 +1005,7 @@ ignored if -ia is passed. {fn} is replaced by the filename and {pid} with the pr
 				return err
 			}
 			lastImageListID = listID
-			printOptions(0)
+			printOptions()
 			printAlert(fmt.Sprintf("Downloaded image to '%s'", imagePath))
 			return spawnViewer(imageCommand, imageRefreshCommand, imageAutoReload, imagePath)
 		},
@@ -1017,7 +1031,7 @@ ignored if -ia is passed. {fn} is replaced by the filename and {pid} with the pr
 				lastImageListID = listID
 			}
 
-			printOptions(0)
+			printOptions()
 			printAlert(fmt.Sprintf("Downloaded image to '%s'", imagePath))
 			return spawnViewer(imageCommand, imageRefreshCommand, imageAutoReload, imagePath)
 		},
@@ -1085,7 +1099,7 @@ ignored if -ia is passed. {fn} is replaced by the filename and {pid} with the pr
 					s.Sort = SortIndex
 					return s
 				})
-				printOptions(0)
+				printOptions()
 				return nil
 			}
 			sorting := Sort(arg)
@@ -1102,7 +1116,7 @@ ignored if -ia is passed. {fn} is replaced by the filename and {pid} with the pr
 				return s
 			})
 
-			printOptions(0)
+			printOptions()
 			return nil
 		},
 		"repeat": func([]string) error {
@@ -1367,10 +1381,7 @@ ignored if -ia is passed. {fn} is replaced by the filename and {pid} with the pr
 				return
 			}
 
-			max := 20
-			if line != "" {
-				max = 0
-			}
+			state.Filtered = line != ""
 			roptions := make([]mtgjson.Card, 0, len(options))
 			for _, c := range options {
 				rc, ok := cardByUUID(c.UUID())
@@ -1384,13 +1395,14 @@ ignored if -ia is passed. {fn} is replaced by the filename and {pid} with the pr
 				s.Options = roptions
 				return s
 			})
-			printOptions(max)
+			printOptions()
 
 			return
 
 		case ModeSearch:
+			state.Filtered = true
 			if line == "" {
-				printOptions(0)
+				printOptions()
 				return
 			}
 			options := searchAll(line)
@@ -1402,13 +1414,14 @@ ignored if -ia is passed. {fn} is replaced by the filename and {pid} with the pr
 					s.Options = options
 					return s
 				})
-				printOptions(0)
+				printOptions()
 				return
 			}
 
 			printErr(errors.New("too many results, try a more specific query"))
 			return
 		case ModeAdd:
+			state.Filtered = true
 			if line == "" {
 				return
 			}
@@ -1429,7 +1442,7 @@ ignored if -ia is passed. {fn} is replaced by the filename and {pid} with the pr
 					s.Mode = ModeSelect
 					return s
 				})
-				printOptions(0)
+				printOptions()
 				return
 			}
 
@@ -1437,6 +1450,7 @@ ignored if -ia is passed. {fn} is replaced by the filename and {pid} with the pr
 			return
 
 		case ModeSelect:
+			state.Filtered = true
 			sel := make([]mtgjson.Card, 0, 1)
 			for _, c := range state.Options {
 				if strings.Contains(strings.ToLower(string(c.UUID)), strings.ToLower(line)) {
@@ -1445,13 +1459,13 @@ ignored if -ia is passed. {fn} is replaced by the filename and {pid} with the pr
 			}
 
 			if len(sel) > 1 {
-				printOptions(0)
+				printOptions()
 				if line != "" {
 					printErr(errors.New("multiple matches, try more specific query"))
 				}
 				return
 			} else if len(sel) == 0 {
-				printOptions(0)
+				printOptions()
 				printErr(errors.New("no card matches that uuid"))
 				return
 			}
