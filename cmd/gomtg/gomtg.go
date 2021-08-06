@@ -899,6 +899,21 @@ ignored if -ia is passed. {fn} is replaced by the filename and {pid} with the pr
 	refreshCh := make(chan struct{}, 1)
 	refresh := func() { go func() { refreshCh <- struct{}{} }() }
 
+	warnedUnsaved := false
+	warnUnsaved := func() bool {
+		if warnedUnsaved {
+			warnedUnsaved = false
+			return false
+		}
+		if state.Changes() {
+			warnedUnsaved = true
+			print(state.String(db, colors, getPricing)...)
+			printErr(errors.New("You have unsaved changes, type /exit again to quit anyway"))
+			return true
+		}
+		return false
+	}
+
 	commands := map[string]func(arg []string) error{
 		"help": func([]string) error {
 			print("Usage:")
@@ -933,6 +948,9 @@ ignored if -ia is passed. {fn} is replaced by the filename and {pid} with the pr
 			return nil
 		},
 		"exit": func([]string) error {
+			if warnUnsaved() {
+				return nil
+			}
 			bye()
 			return nil
 		},

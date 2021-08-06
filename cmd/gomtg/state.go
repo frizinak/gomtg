@@ -26,6 +26,12 @@ type State struct {
 	Delete    []LocalCard
 }
 
+func (s State) Changes() bool {
+	return len(s.Selection) != 0 ||
+		len(s.Tagging) != 0 ||
+		len(s.Delete) != 0
+}
+
 func (s State) SortLocal(getPricing getPricing) {
 	sorter := NewSortable(func(i, j int) {
 		s.Local[i], s.Local[j] = s.Local[j], s.Local[i]
