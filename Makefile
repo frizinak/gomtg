@@ -39,5 +39,5 @@ debug: $(NATIVE_DEBUG)
 		-ir '/bin/sh -c "imv-msg {pid} close all; imv-msg {pid} open {fn}"'\
 		-n \
 		-c 'low:0:8' \
-		-iav  \
+		-iav 9 \
 		-np 2>err

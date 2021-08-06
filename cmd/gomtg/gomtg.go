@@ -353,7 +353,7 @@ func main() {
 	var imageCommand string
 	var imageAutoReload bool
 	var imageRefreshCommand string
-	var imageAutoView bool
+	var imageAutoView int
 	var imageNoCache bool
 	var dbFile string
 	var noPricing bool
@@ -398,7 +398,7 @@ ignored if -ia is passed. {fn} is replaced by the filename and {pid} with the pr
 	flag.StringVar(&dbFile, "db", "gomtg.db", "Database file to use")
 	flag.StringVar(&colorStr, "c", colorStr, "change default colors (key:bg:fg:bold[,key:value...])")
 	flag.BoolVar(&testColors, "color-test", testColors, "test colors")
-	flag.BoolVar(&imageAutoView, "iav", false, "Show last added card in image viewer")
+	flag.IntVar(&imageAutoView, "iav", 0, "if value > 0: Show last added card in image viewer and render collage if amount of options <= value")
 	flag.BoolVar(&noPricing, "np", false, "Disable automatically pricing newly added cards")
 	flag.StringVar(&currency, "currency", "EUR", "EUR or USD")
 	flag.Parse()
@@ -814,6 +814,9 @@ ignored if -ia is passed. {fn} is replaced by the filename and {pid} with the pr
 			)
 		}
 
+		if imageAutoView <= 0 {
+			return
+		}
 		err := genImages(cards, imagePath, imageGetter, func(i, total int) {})
 		if err != nil {
 			printErr(err)
@@ -1488,6 +1491,14 @@ ignored if -ia is passed. {fn} is replaced by the filename and {pid} with the pr
 					s.Mode = ModeSelect
 					return s
 				})
+				if len(state.Options) <= imageAutoView {
+					_, err := handleCommand([]string{"/images"})
+					if err != nil {
+						printErr(err)
+					}
+					return
+				}
+
 				printOptions()
 				return
 			}
@@ -1522,6 +1533,7 @@ ignored if -ia is passed. {fn} is replaced by the filename and {pid} with the pr
 				s.Mode = s.PrevMode
 				return s
 			})
+
 		}
 	}
 
