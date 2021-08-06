@@ -23,6 +23,7 @@ type State struct {
 
 	Selection Selection
 	Tagging   []Tagging
+	Delete    []LocalCard
 }
 
 func (s State) SortLocal(getPricing getPricing) {
@@ -123,6 +124,7 @@ func (s State) Equal(o State) bool {
 		s.FilterSet != o.FilterSet ||
 		len(s.Selection) != len(o.Selection) ||
 		len(s.Tags) != len(o.Tags) ||
+		len(s.Delete) != len(o.Delete) ||
 		len(s.Tagging) != len(o.Tagging) ||
 		len(s.Options) != len(o.Options) {
 		return false
@@ -151,18 +153,25 @@ func (s State) Equal(o State) bool {
 		}
 	}
 
+	for i := range s.Delete {
+		if s.Delete[i].Card != o.Delete[i].Card {
+			return false
+		}
+	}
+
 	return true
 }
 
 func (s State) String(db *DB, colors Colors, getPricing getPricing) []string {
 	data := []string{s.StringShort(colors)}
 	selCards := make([]mtgjson.Card, len(s.Selection))
+	good, bad := colors.Get("good"), colors.Get("bad")
 	for i, c := range s.Selection {
 		selCards[i] = c.Card
 	}
 	cardsStrs := cardsString(db, selCards, 0, getPricing, colors, false)
 	for i := range cardsStrs {
-		cardsStrs[i] = fmt.Sprintf(" \u2514 %s", cardsStrs[i])
+		cardsStrs[i] = fmt.Sprintf(" \u2514 %s ADD \033[0m %s", good, cardsStrs[i])
 	}
 	data = append(data, cardsStrs...)
 
@@ -189,6 +198,12 @@ func (s State) String(db *DB, colors Colors, getPricing getPricing) []string {
 			fmt.Sprintf(" \u2514 removed tag '%s' from %d cards", tag, amount),
 		)
 	}
+
+	delStrs := localCardsString(db, s.Delete, 0, getPricing, colors, false)
+	for i := range delStrs {
+		delStrs[i] = fmt.Sprintf(" \u2514 %s DEL \033[0m %s", bad, delStrs[i])
+	}
+	data = append(data, delStrs...)
 
 	return data
 }

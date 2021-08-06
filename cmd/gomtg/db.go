@@ -128,6 +128,23 @@ func (db *DB) AddMTGJSON(c mtgjson.Card) {
 	db.Add(FromCard(db, c))
 }
 
+func (db *DB) Delete(c *Card) {
+	n := false
+	for i := 0; i < len(db.data); i++ {
+		dc := db.data[i]
+		if c == dc {
+			n = true
+			db.data = append(db.data[:i], db.data[i+1:]...)
+			i--
+			db.save = true
+		}
+	}
+
+	if n {
+		db.rebuildUUIDs()
+	}
+}
+
 func (db *DB) Cards() []*Card {
 	d := make([]*Card, len(db.data))
 	copy(d, db.data)
@@ -182,6 +199,17 @@ func (db *DB) Save(file string) (bool, error) {
 	}
 	db.save = false
 	return true, nil
+}
+
+func (db *DB) rebuildUUIDs() {
+	byUUID := make(map[mtgjson.UUID][]int)
+	for i, c := range db.data {
+		if _, ok := byUUID[c.uuid]; !ok {
+			byUUID[c.uuid] = make([]int, 0, 1)
+		}
+		byUUID[c.uuid] = append(byUUID[c.uuid], i)
+	}
+	db.byUUID = byUUID
 }
 
 func LoadDB(file string) (*DB, error) {

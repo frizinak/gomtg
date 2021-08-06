@@ -26,6 +26,8 @@ import (
 	"github.com/nightlyone/lockfile"
 )
 
+var GitVersion string
+
 func progress(msg string, cb func() error) error {
 	fmt.Printf("\033[?25l[ ] %s", msg)
 	ts := time.Now()
@@ -907,7 +909,7 @@ ignored if -ia is passed. {fn} is replaced by the filename and {pid} with the pr
 			print("/sets <filter>                print all known sets (optionally filtered)")
 			print("/sort <sort>                  sort items by index, name or price")
 			print("/undo   | /u                  remove last item from queue")
-			print("/images | /imgs               create a collage of all cards in current list")
+			print("/images | /imgs               create a collage of all cards in current view")
 			print("/image  | /img <uuid>         show card image for card with (partial) UUID <uuid>")
 			print("/prices                       refresh pricing data (async) for cards in collection")
 			print("/price <uuid>                 show pricing for card with (partial) UUID")
@@ -926,6 +928,7 @@ ignored if -ia is passed. {fn} is replaced by the filename and {pid} with the pr
 			print("                                                                    -<tag> to exclude items with <tag>")
 			print("                                - search:        search all cards (fuzzy)")
 			print("/repeat | /r                  add last card again")
+			print("/delete | /del                remove cards from collection in current view")
 			print("/set    | /s <set>            only operate on cards within the given set")
 			return nil
 		},
@@ -947,9 +950,16 @@ ignored if -ia is passed. {fn} is replaced by the filename and {pid} with the pr
 		},
 		"commit": func([]string) error {
 			selection := state.Selection
+			deletes := state.Delete
+			tags := state.Tagging
+
 			state.Selection = nil
+			state.Delete = nil
+			state.Tagging = nil
 			for i := range queue {
 				queue[i].Selection = nil
+				queue[i].Delete = nil
+				queue[i].Tagging = nil
 			}
 
 			for _, c := range selection {
@@ -958,15 +968,14 @@ ignored if -ia is passed. {fn} is replaced by the filename and {pid} with the pr
 				db.Add(dbCard)
 			}
 
+			for _, c := range deletes {
+				db.Delete(c.Card)
+			}
+
 			for _, c := range db.Cards() {
 				c.SetPricing(getFullPricing(c.UUID(), false, false))
 			}
 
-			tags := state.Tagging
-			state.Tagging = nil
-			for i := range queue {
-				queue[i].Tagging = nil
-			}
 			for _, t := range tags {
 				t.Commit()
 			}
@@ -1223,6 +1232,24 @@ ignored if -ia is passed. {fn} is replaced by the filename and {pid} with the pr
 
 			return nil
 		},
+		"delete": func(a []string) error {
+			if len(a) != 0 {
+				return errors.New("/delete doesn't take any arguments")
+			}
+			if state.Mode != ModeCollection {
+				return errors.New("/delete can only be used from /mode collection")
+			}
+
+			printAlert(fmt.Sprintf("Deleted %d cards", len(state.Local)))
+			modifyState(true, func(s State) State {
+				s.Delete = append(s.Delete, s.Local...)
+				s.Local = nil
+				s.Options = nil
+				return s
+			})
+			printOptions()
+			return nil
+		},
 	}
 
 	commands["quit"] = commands["exit"]
@@ -1233,6 +1260,7 @@ ignored if -ia is passed. {fn} is replaced by the filename and {pid} with the pr
 	commands["s"] = commands["set"]
 	commands["q"] = commands["queue"]
 	commands["r"] = commands["repeat"]
+	commands["del"] = commands["delete"]
 
 	var handleCommand func(f []string) (bool, error)
 	handleCommand = func(f []string) (bool, error) {
