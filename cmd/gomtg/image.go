@@ -94,6 +94,7 @@ func getImageCached(url string, dir string) (image.Image, error) {
 		img, _, err := image.Decode(f)
 		return img, err
 	}
+	f.Close()
 
 	if os.IsNotExist(err) {
 		tmp := tmpFile(path)
@@ -106,6 +107,7 @@ func getImageCached(url string, dir string) (image.Image, error) {
 		done := make(chan struct{}, 1)
 		go func() {
 			err := downloadImage(url, f, pw)
+			f.Close()
 			pw.Close()
 			if err != nil {
 				gerr = err

@@ -32,15 +32,16 @@ func loadData(file string) (mtgjson.AllPrintings, error) {
 			if err != nil {
 				return err
 			}
-			defer in.Close()
 
 			tmp := file + ".tmp"
 			out, err := os.Create(tmp)
 			if err != nil {
+				in.Close()
 				return err
 			}
 
 			data, err := mtgjson.ReadAllPrintingsJSON(in)
+			in.Close()
 			if err != nil {
 				out.Close()
 				return err
