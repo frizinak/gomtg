@@ -82,6 +82,7 @@ func spawnViewer(cmd, refreshCmd string, autoReload bool, path string) error {
 	err = imageViewerProcess.Start()
 	if err != nil {
 		imageViewerProcess = nil
+		return err
 	}
 	imageViewerMutex.Lock()
 	imageViewerRunning = true
