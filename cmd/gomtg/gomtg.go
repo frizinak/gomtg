@@ -1508,6 +1508,7 @@ ignored if -ia is passed. {fn} is replaced by the filename and {pid} with the pr
 	}
 
 	if !skipIntro {
+		fmt.Printf("GOMTG Version: %s\n", GitVersion)
 		fmt.Println("Type /help for usage information")
 		fmt.Println("Type /exit to quit or close stdin (Ctrl-d)")
 		fmt.Println("press enter to continue...")
