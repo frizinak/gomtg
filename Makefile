@@ -19,6 +19,10 @@ LDFLAGS=-s -w -X main.GitVersion=$(VERSION)
 .PHONY: all
 all: $(BINS)
 
+.PHONY: install
+install: $(NATIVE)
+	cp -f "$(NATIVE)" "$$GOBIN/gomtg"
+
 dist/gomtg-%: $(DEP_FILES) | dist
 	GOOS=$$(echo $* | cut -d- -f1) \
 		 GOARCH=$$(echo $* | cut -d- -f2 | cut -d. -f1) \
