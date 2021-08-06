@@ -1,7 +1,6 @@
 package main
 
 import (
-	"bufio"
 	"errors"
 	"flag"
 	"fmt"
@@ -445,7 +444,7 @@ ignored if -ia is passed. {fn} is replaced by the filename and {pid} with the pr
 
 	term := console.Current()
 
-	sigCh := make(chan os.Signal, 1)
+	sigCh := make(chan os.Signal, 10)
 	cancelCh := make(chan struct{}, 1)
 	signal.Notify(
 		sigCh,
@@ -493,7 +492,7 @@ ignored if -ia is passed. {fn} is replaced by the filename and {pid} with the pr
 
 	go func() {
 		for s := range sigCh {
-			if s == syscall.SIGINT {
+			if s == os.Interrupt {
 				go func() { cancelCh <- struct{}{} }()
 				continue
 			}
@@ -1511,7 +1510,7 @@ ignored if -ia is passed. {fn} is replaced by the filename and {pid} with the pr
 	if !skipIntro {
 		fmt.Printf("GOMTG Version: %s\n", GitVersion)
 		fmt.Println("Type /help for usage information")
-		fmt.Println("Type /exit to quit or close stdin (Ctrl-d)")
+		fmt.Println("Type /exit to quit")
 		fmt.Println("press enter to continue...")
 		func() {
 			b := make([]byte, 1)
@@ -1529,9 +1528,6 @@ ignored if -ia is passed. {fn} is replaced by the filename and {pid} with the pr
 		print(fmt.Sprintf("> %s", arg))
 		handleInputLine(arg)
 	}
-
-	scan := bufio.NewScanner(os.Stdin)
-	scan.Split(bufio.ScanLines)
 
 	inputCh := make(chan string, 1)
 	var discardUntil time.Time
@@ -1561,7 +1557,7 @@ ignored if -ia is passed. {fn} is replaced by the filename and {pid} with the pr
 		for {
 			n, err := os.Stdin.Read(b)
 			if err == io.EOF {
-				break
+				err = nil
 			}
 			exit(err)
 			if n == 0 {
