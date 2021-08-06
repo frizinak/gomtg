@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"errors"
 	"flag"
 	"fmt"
@@ -455,7 +456,6 @@ ignored if -ia is passed. {fn} is replaced by the filename and {pid} with the pr
 		syscall.SIGQUIT,
 	)
 	cleanup := func() {
-		_ = term.Reset()
 		fmt.Println("\033[?25h")
 		killViewer()
 		_ = locker.Unlock()
@@ -1191,14 +1191,6 @@ ignored if -ia is passed. {fn} is replaced by the filename and {pid} with the pr
 
 			return nil
 		},
-		"fast": func([]string) error {
-			if state.Mode != ModeAdd {
-				return errors.New("/fast can only be used from /mode add")
-			}
-			_ = term.SetRaw()
-			state.Fast = true
-			return nil
-		},
 		"tag": func(args []string) error {
 			if len(args) == 0 && state.Mode != ModeCollection {
 				modifyState(true, func(s State) State {
@@ -1482,9 +1474,6 @@ ignored if -ia is passed. {fn} is replaced by the filename and {pid} with the pr
 			} else if len(options) == 1 {
 				addToCollection(options)
 				return
-			} else if state.Fast {
-				printErr(fmt.Errorf("%d results", len(options)))
-				return
 			} else if len(options) < 100 {
 				modifyState(true, func(s State) State {
 					s.Options = options
@@ -1560,85 +1549,15 @@ ignored if -ia is passed. {fn} is replaced by the filename and {pid} with the pr
 	}
 
 	inputCh := make(chan string, 1)
-	var discardUntil time.Time
 	go func() {
-		b := make([]byte, 1)
-		buf := make([]byte, 0)
-		fl := func() {
-			printDiv()
-			print("Search all and add to collection")
-			print("press enter to reset intput and ctrl-c to leave fast mode")
-			print(fmt.Sprintf("> %s", string(buf)))
-			flush()
-		}
-		const delay = time.Second * 1
-		go func() {
-			s := time.Millisecond * 30
-			for {
-				if state.Fast && time.Since(discardUntil) < 0 {
-					time.Sleep(delay)
-					print("\033[?25h")
-					fl()
-					continue
-				}
-				time.Sleep(s)
-			}
-		}()
 		for {
-			n, err := os.Stdin.Read(b)
-			if err == io.EOF {
-				err = nil
+			scan := bufio.NewScanner(os.Stdin)
+			scan.Split(bufio.ScanLines)
+			for scan.Scan() {
+				inputCh <- scan.Text()
 			}
-			exit(err)
-			if n == 0 {
-				continue
-			}
-
-			buf = append(buf, b[0])
-			if state.Fast {
-				if time.Since(discardUntil) < 0 {
-					buf = buf[:0]
-					continue
-				}
-				switch b[0] {
-				case 3:
-					buf = buf[:0]
-					cancelCh <- struct{}{}
-				case 13:
-					buf = buf[:0]
-					fl()
-				case 127:
-					for i := 0; i < 2; i++ {
-						if len(buf) > 1 {
-							buf = buf[:len(buf)-1]
-						}
-					}
-				default:
-					options := searchAll(string(buf))
-					if len(options) == 1 {
-						addToCollection(options)
-						print("\033[?25l")
-						flush()
-						buf = buf[:0]
-						discardUntil = time.Now().Add(delay)
-						continue
-					}
-					printErr(fmt.Errorf("%d results", len(options)))
-					fl()
-				}
-
-				continue
-			}
-
-			if b[0] == 10 {
-				if len(buf) > 1 {
-					buf = buf[:len(buf)-1]
-				}
-				inputCh <- string(buf)
-				buf = buf[:0]
-			}
+			exit(scan.Err())
 		}
-		bye()
 	}()
 
 	prompt := func() {
@@ -1675,10 +1594,6 @@ ignored if -ia is passed. {fn} is replaced by the filename and {pid} with the pr
 	for {
 		select {
 		case <-cancelCh:
-			if state.Fast {
-				_ = term.Reset()
-			}
-			state.Fast = false
 
 			modifyState(true, func(s State) State {
 				switch s.Mode {

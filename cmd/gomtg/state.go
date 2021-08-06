@@ -17,7 +17,6 @@ type State struct {
 	Sort       Sort
 	Tags       []string
 	PageOffset int
-	Fast       bool
 
 	Filtered bool
 
@@ -227,11 +226,7 @@ func (s State) StringShort(colors Colors) string {
 		d = append(d, fmt.Sprintf("tags:%s", strings.Join(s.Tags, ",")))
 	}
 
-	fast := ""
-	if s.Fast {
-		fast = " FAST "
-	}
-	mode := fmt.Sprintf("%s %s%s \033[0m", modeClr, fast, strings.ToUpper(string(s.Mode)))
+	mode := fmt.Sprintf("%s %s \033[0m", modeClr, strings.ToUpper(string(s.Mode)))
 	return fmt.Sprintf("%s %s %s \033[0m", mode, clr, strings.Join(d, " "))
 }
 
