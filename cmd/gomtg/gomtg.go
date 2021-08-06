@@ -378,7 +378,8 @@ func main() {
 if no {fn} argument is found, it will be appended to the command.
 e.g.: -i "chromium 'file://{fn}'",
 e.g.: -i 'imv' -ia,
-e.g.: -i 'imv' -ir '/bin/sh -c "imv-msg {pid} close all; imv-msg {pid} open {fn}"'`,
+e.g.: -i 'imv' -ir '/bin/sh -c "imv-msg {pid} close all; imv-msg {pid} open {fn}"'
+e.g.: -i "C:\\Program\ Files\\JPEGView64\\JPEGView.exe" -ia`,
 	)
 	flag.BoolVar(
 		&imageAutoReload,
