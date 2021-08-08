@@ -781,12 +781,12 @@ ignored if -ia is passed. {fn} is replaced by the filename and {pid} with the pr
 			}
 		}
 		if state.Mode == ModeCollection {
-			state.SortLocal(getPricing)
+			state.SortLocal(db, getPricing)
 			print(localCardsString(db, state.Local, max, getPricing, colors, true)...)
 			printSkipped(len(state.Local), max)
 			return
 		}
-		state.SortOptions(getPricing)
+		state.SortOptions(db, getPricing)
 		print(cardsString(db, state.Options, max, getPricing, colors, true)...)
 		printSkipped(len(state.Options), max)
 	}
@@ -937,7 +937,7 @@ ignored if -ia is passed. {fn} is replaced by the filename and {pid} with the pr
 			print("/exit   | /quit               quit")
 			print("/queue  | /q                  view operation queue")
 			print("/sets <filter>                print all known sets (optionally filtered)")
-			print("/sort <sort>                  sort items by index, name or price")
+			print("/sort <sort>                  sort items by index, name, count or price")
 			print("/undo   | /u                  remove last item from queue")
 			print("/images | /imgs               create a collage of all cards in current view")
 			print("/image  | /img <uuid>         show card image for card with (partial) UUID <uuid>")

@@ -31,7 +31,7 @@ func (s State) Changes() bool {
 		len(s.Delete) != 0
 }
 
-func (s State) SortLocal(getPricing getPricing) {
+func (s State) SortLocal(db *DB, getPricing getPricing) {
 	sorter := NewSortable(func(i, j int) {
 		s.Local[i], s.Local[j] = s.Local[j], s.Local[i]
 	})
@@ -40,6 +40,10 @@ func (s State) SortLocal(getPricing getPricing) {
 	case SortName:
 		for _, c := range s.Local {
 			strs = append(strs, c.Name())
+		}
+	case SortCount:
+		for _, c := range s.Local {
+			ints = append(ints, db.Count(c.UUID()))
 		}
 	case SortPrice:
 		for _, c := range s.Local {
@@ -56,7 +60,7 @@ func (s State) SortLocal(getPricing getPricing) {
 	sorter.Sort()
 }
 
-func (s State) SortOptions(getPricing getPricing) {
+func (s State) SortOptions(db *DB, getPricing getPricing) {
 	sorter := NewSortable(func(i, j int) {
 		s.Options[i], s.Options[j] = s.Options[j], s.Options[i]
 	})
@@ -66,6 +70,10 @@ func (s State) SortOptions(getPricing getPricing) {
 		for _, c := range s.Options {
 			p, _ := getPricing(c.UUID, false, false)
 			ints = append(ints, int(p*100))
+		}
+	case SortCount:
+		for _, c := range s.Options {
+			ints = append(ints, db.Count(c.UUID))
 		}
 	default:
 		for _, c := range s.Options {
@@ -83,12 +91,14 @@ const (
 	SortIndex Sort = "index"
 	SortName  Sort = "name"
 	SortPrice Sort = "price"
+	SortCount Sort = "count"
 )
 
 var Sorts = map[Sort]struct{}{
 	SortIndex: {},
 	SortName:  {},
 	SortPrice: {},
+	SortCount: {},
 }
 
 func (s Sort) Valid() bool {
