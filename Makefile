@@ -3,6 +3,7 @@
 #go build -o build ./cmd/gomtg/^C& go run ./cmd/gomtg/ -i imv -ir '/bin/sh -c "imv-msg {pid} close all; imv-msg {pid} open {fn}"'  -n -c 'low:0:8' -iav  -np 2>err
 
 #SRC := $(shell find . -type f -name '*.go') go.mod
+TPL := '{{ $$root := .Dir }}{{ range .GoFiles }}{{ printf "%s/%s\n" $$root . }}{{ end }}'
 DEPS = $(shell go list -f '{{ join .Deps "\n" }}' ./cmd/gomtg)
 DEP_FILES = $(shell go list -f $(TPL) ./cmd/gomtg $(DEPS))
 
