@@ -60,7 +60,7 @@ type Data struct {
 	IsFoilOnly       bool   `json:"isFoilOnly"`
 	IsOnlineOnly     bool   `json:"isOnlineOnly"`
 
-	Cards []Card `json:"cards"`
+	Cards []FullCard `json:"cards"`
 	// Booster map[string]interface{}
 	// Tokens []interface{}
 	// SealedProduct
@@ -68,9 +68,17 @@ type Data struct {
 }
 
 type Card struct {
+	UUID         UUID         `json:"uuid"`
+	Identifiers  ID           `json:"identifiers"`
+	Name         string       `json:"name"`
+	SetCode      SetID        `json:"setCode"`
+	Availability Availability `json:"availability"`
+}
+
+type FullCard struct {
+	Card
 	// Artist                  string        `json:"artist"`
 	ASCII                   string        `json:"asciiName"`
-	Availability            Availability  `json:"availability"`
 	BorderColor             BorderColor   `json:"borderColor"`
 	ColorIdentity           Colors        `json:"colorIdentity"`
 	ColorIndicator          Colors        `json:"colorIndicator"`
@@ -87,7 +95,6 @@ type Card struct {
 	HasFoil                 bool          `json:"hasFoil"`
 	HasAlternativeDeckLimit bool          `json:"hasAlternativeDeckLimit"`
 	HasNonFoil              bool          `json:"hasNonFoil"`
-	Identifiers             ID            `json:"identifiers"`
 	IsAlternative           bool          `json:"isAlternative"`
 	IsFullArt               bool          `json:"isFullArt"`
 	IsOnlineOnly            bool          `json:"isOnlineOnly"`
@@ -104,7 +111,6 @@ type Card struct {
 	Life                    string        `json:"life"`
 	Loyalty                 string        `json:"loyalty"`
 	ManaCost                string        `json:"manaCost"`
-	Name                    string        `json:"name"`
 	Number                  string        `json:"number"`
 	OriginalReleaseDate     Time          `json:"originalReleaseDate"`
 	OriginalText            string        `json:"originalText"`
@@ -114,7 +120,6 @@ type Card struct {
 	Printings               []SetID       `json:"printings"`
 	PromoTypes              []string      `json:"promoTypes"`
 	Rarity                  Rarity        `json:"rarity"`
-	SetCode                 SetID         `json:"setCode"`
 	Side                    string        `json:"side"`
 	Subtypes                []string      `json:"subtypes"`
 	Supertypes              []string      `json:"supertypes"`
@@ -122,7 +127,6 @@ type Card struct {
 	Toughness               string        `json:"toughness"`
 	Type                    string        `json:"type"`
 	Types                   []string      `json:"types"`
-	UUID                    UUID          `json:"uuid"`
 	Variations              []UUID        `json:"variations"`
 	// Watermark               string        `json:"watermark"`
 	// PurchaseUrls        `json:"purchaseUrls"`
@@ -194,10 +198,20 @@ func (p AllPrintings) SetIDs() []SetID {
 	return n
 }
 
+func (p AllPrintings) FullCards() []FullCard {
+	n := make([]FullCard, 0, len(p))
+	for i := range p {
+		n = append(n, p[i].Cards...)
+	}
+	return n
+}
+
 func (p AllPrintings) Cards() []Card {
 	n := make([]Card, 0, len(p))
 	for i := range p {
-		n = append(n, p[i].Cards...)
+		for j := range p[i].Cards {
+			n = append(n, p[i].Cards[j].Card)
+		}
 	}
 	return n
 }

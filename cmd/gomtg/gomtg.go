@@ -560,22 +560,24 @@ ignored if -ia is passed. {fn} is replaced by the filename and {pid} with the pr
 		return nil
 	}))
 
-	data, err := loadData(dest)
-	exit(err)
-
 	var cards []mtgjson.Card
 	var byUUID map[mtgjson.UUID]int
-	exit(progress("Filter paper cards", func() error {
-		data = data.FilterOnlineOnly(false)
-		cards = data.Cards()
-		byUUID = mtgjson.ByUUID(cards)
-		return nil
-	}))
+	sets := make(map[mtgjson.SetID]string)
+	func() {
+		data, err := loadData(dest)
+		exit(err)
 
-	sets := make(map[mtgjson.SetID]struct{})
-	for i := range data {
-		sets[i] = struct{}{}
-	}
+		exit(progress("Filter paper cards", func() error {
+			data = data.FilterOnlineOnly(false)
+			cards = data.Cards()
+			byUUID = mtgjson.ByUUID(cards)
+			return nil
+		}))
+
+		for i := range data {
+			sets[i] = data[i].Name
+		}
+	}()
 
 	var fuzz *fuzzy.Index
 	exit(progress("Create full index", func() error {
@@ -644,9 +646,9 @@ ignored if -ia is passed. {fn} is replaced by the filename and {pid} with the pr
 	lastImageListID := ""
 	printSets := func(filter string) {
 		filter = strings.ToLower(filter)
-		list := make([]string, 0, len(data))
-		for _, d := range data {
-			v := fmt.Sprintf("%s: %s", d.Code, d.Name)
+		list := make([]string, 0, len(sets))
+		for k, v := range sets {
+			v := fmt.Sprintf("%s: %s", k, v)
 			if filter != "" && !strings.Contains(strings.ToLower(v), filter) {
 				continue
 			}
