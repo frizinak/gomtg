@@ -43,7 +43,7 @@ func (s State) SortLocal(getPricing getPricing) {
 		}
 	case SortPrice:
 		for _, c := range s.Local {
-			p, _ := getPricing(c.UUID(), false)
+			p, _ := getPricing(c.UUID(), c.Foil(), false)
 			ints = append(ints, int(p*100))
 		}
 	default:
@@ -64,7 +64,7 @@ func (s State) SortOptions(getPricing getPricing) {
 	switch s.Sort {
 	case SortPrice:
 		for _, c := range s.Options {
-			p, _ := getPricing(c.UUID, false)
+			p, _ := getPricing(c.UUID, false, false)
 			ints = append(ints, int(p*100))
 		}
 	default:

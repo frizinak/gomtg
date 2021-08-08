@@ -79,6 +79,7 @@ func (c *Card) UUID() mtgjson.UUID   { return c.uuid }
 func (c *Card) SetID() mtgjson.SetID { return c.setID }
 func (c *Card) Tags() []string       { return c.tags.Slice() }
 func (c *Card) HasTag(t string) bool { return c.tags.Contains(t) }
+func (c *Card) Foil() bool           { return c.HasTag("foil") }
 
 func (c *Card) Tag(tags []string) {
 	changed := c.tags.Add(tags)

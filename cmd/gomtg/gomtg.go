@@ -179,7 +179,7 @@ func colorUniqUUID(uuids []string, colors Colors) []string {
 	return ret
 }
 
-type getPricing func(uuid mtgjson.UUID, fetch bool) (float64, bool)
+type getPricing func(uuid mtgjson.UUID, foil, fetch bool) (float64, bool)
 
 func cardsString(db *DB, cards []mtgjson.Card, max int, getPricing getPricing, colors Colors, uniq bool) []string {
 	l := make([]string, 0, len(cards))
@@ -209,7 +209,7 @@ func cardsString(db *DB, cards []mtgjson.Card, max int, getPricing getPricing, c
 	}
 
 	for i, c := range cards {
-		pricing, ok := getPricing(cards[i].UUID, false)
+		pricing, ok := getPricing(cards[i].UUID, false, false)
 		pricingClr := ""
 		if !ok {
 			pricingClr = bad
@@ -262,7 +262,7 @@ func localCardsString(db *DB, cards []LocalCard, max int, getPricing getPricing,
 	prices := make([][]byte, len(cards))
 	//longestPrice := 0
 	for i := range prices {
-		pricing, ok := getPricing(cards[i].UUID(), false)
+		pricing, ok := getPricing(cards[i].UUID(), cards[i].Foil(), false)
 		p := fmt.Sprintf("%.2f", pricing)
 		if pricing == 0 {
 			ok = false
@@ -438,9 +438,19 @@ ignored if -ia is passed. {fn} is replaced by the filename and {pid} with the pr
 	pricing := make(map[mtgjson.UUID]Pricing)
 	pricingBusy := make(map[mtgjson.UUID]struct{})
 	var pricingMutex sync.RWMutex
-	pricingValue := func(p Pricing) float64 { return p.EUR }
+	pricingValue := func(p Pricing, foil bool) float64 {
+		if foil {
+			return p.EURFoil
+		}
+		return p.EUR
+	}
 	if currency != "eur" {
-		pricingValue = func(p Pricing) float64 { return p.USD }
+		pricingValue = func(p Pricing, foil bool) float64 {
+			if foil {
+				return p.USDFoil
+			}
+			return p.USD
+		}
 	}
 
 	term := console.Current()
@@ -663,7 +673,7 @@ ignored if -ia is passed. {fn} is replaced by the filename and {pid} with the pr
 		return
 	}
 
-	getFullPricing := func(uuid mtgjson.UUID, fetch bool, wait bool) Pricing {
+	getFullPricing := func(uuid mtgjson.UUID, fetch, forceFetch, wait bool) Pricing {
 		p := Pricing{T: time.Now()}
 		c, ok := cardByUUID(uuid)
 		if !ok || c.Identifiers.ScryfallId == "" {
@@ -673,7 +683,7 @@ ignored if -ia is passed. {fn} is replaced by the filename and {pid} with the pr
 		check := func() (Pricing, bool) {
 			v, ok := pricing[uuid]
 			if ok {
-				pv := pricingValue(v)
+				pv := pricingValue(v, false)
 				if pv != 0 && time.Since(v.T) < skryfall.PricingOutdated {
 					return v, true
 				}
@@ -684,15 +694,17 @@ ignored if -ia is passed. {fn} is replaced by the filename and {pid} with the pr
 			return v, false
 		}
 
-		pricingMutex.RLock()
-		v, ok := check()
-		pricingMutex.RUnlock()
-		if ok {
-			return v
-		}
+		if !forceFetch {
+			pricingMutex.RLock()
+			v, ok := check()
+			pricingMutex.RUnlock()
+			if ok {
+				return v
+			}
 
-		if !fetch {
-			return v
+			if !fetch {
+				return v
+			}
 		}
 
 		w := make(chan struct{}, 1)
@@ -739,9 +751,9 @@ ignored if -ia is passed. {fn} is replaced by the filename and {pid} with the pr
 		return p
 	}
 
-	getPricing := func(uuid mtgjson.UUID, fetch bool) (float64, bool) {
-		p := getFullPricing(uuid, fetch, false)
-		v := pricingValue(p)
+	getPricing := func(uuid mtgjson.UUID, foil, fetch bool) (float64, bool) {
+		p := getFullPricing(uuid, fetch, false, false)
+		v := pricingValue(p, foil)
 		return v, v != 0 && time.Since(p.T) <= skryfall.PricingOutdated
 	}
 
@@ -794,7 +806,7 @@ ignored if -ia is passed. {fn} is replaced by the filename and {pid} with the pr
 		})
 
 		for i := range cards {
-			getPricing(cards[i].UUID, !noPricing)
+			getPricing(cards[i].UUID, false, !noPricing)
 			times := 1
 			cut := len(lastAdded)
 			for j := len(lastAdded) - 1; j >= 0; j-- {
@@ -994,7 +1006,7 @@ ignored if -ia is passed. {fn} is replaced by the filename and {pid} with the pr
 			}
 
 			for _, c := range db.Cards() {
-				c.SetPricing(getFullPricing(c.UUID(), false, false))
+				c.SetPricing(getFullPricing(c.UUID(), false, false, false))
 			}
 
 			for _, t := range tags {
@@ -1163,7 +1175,7 @@ ignored if -ia is passed. {fn} is replaced by the filename and {pid} with the pr
 			}
 
 			for _, c := range state.Local {
-				getPricing(c.UUID(), true)
+				getPricing(c.UUID(), c.Foil(), true)
 			}
 
 			return nil
@@ -1177,9 +1189,9 @@ ignored if -ia is passed. {fn} is replaced by the filename and {pid} with the pr
 				return err
 			}
 
-			o := getFullPricing(card.UUID, false, true)
-			n := getFullPricing(card.UUID, true, true)
-			_, ok := getPricing(card.UUID, false)
+			o := getFullPricing(card.UUID, false, false, true)
+			n := getFullPricing(card.UUID, true, true, true)
+			_, ok := getPricing(card.UUID, false, false)
 			if !ok {
 				return errors.New("failed to fetch price")
 			}
