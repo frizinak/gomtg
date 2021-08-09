@@ -25,6 +25,11 @@ type cardResult struct {
 	err error
 }
 
+type cardRequest struct {
+	id  string
+	res chan cardResult
+}
+
 type Card struct {
 	ID              string `json:"id"`
 	OracleID        string `json:"oracle_id"`
@@ -71,9 +76,7 @@ type API struct {
 	timeout time.Duration
 	rate    chan struct{}
 
-	cardsToFetch chan string
-	rm           sync.RWMutex
-	cardResults  map[string]cardResult
+	cardsToFetch chan cardRequest
 }
 
 func New(c *http.Client, timeout time.Duration) *API {
@@ -87,8 +90,7 @@ func New(c *http.Client, timeout time.Duration) *API {
 		c:            c,
 		timeout:      timeout,
 		rate:         make(chan struct{}, 1),
-		cardsToFetch: make(chan string, 1),
-		cardResults:  make(map[string]cardResult),
+		cardsToFetch: make(chan cardRequest, 1),
 	}
 }
 
@@ -131,16 +133,10 @@ func (api *API) CardDeferred(id string) (Card, error) {
 	if !api.running {
 		api.run()
 	}
-	api.cardsToFetch <- id
-	for {
-		time.Sleep(deferredIV)
-		api.rm.RLock()
-		c, ok := api.cardResults[id]
-		api.rm.RUnlock()
-		if ok {
-			return c.Card, c.err
-		}
-	}
+	ch := make(chan cardResult, 1)
+	api.cardsToFetch <- cardRequest{id: id, res: ch}
+	res := <-ch
+	return res.Card, res.err
 }
 
 func (api *API) run() {
@@ -152,7 +148,7 @@ func (api *API) run() {
 	api.running = true
 	api.m.Unlock()
 	go func() {
-		list := make([]string, 0, 100)
+		list := make([]cardRequest, 0, 100)
 		do := make(chan struct{}, 1)
 		go func() {
 			for {
@@ -164,19 +160,33 @@ func (api *API) run() {
 			if len(list) == 0 {
 				return
 			}
-			res, err := api.Collection(list)
-			api.rm.Lock()
-			if err != nil {
-				for _, id := range list {
-					api.cardResults[id] = cardResult{err: err}
+			ids := make([]string, len(list))
+			m := make(map[string][]cardRequest, len(list))
+			for i, v := range list {
+				ids[i] = v.id
+				if _, ok := m[v.id]; !ok {
+					m[v.id] = make([]cardRequest, 0, 1)
 				}
+				m[v.id] = append(m[v.id], v)
+			}
+			res, err := api.Collection(ids)
+			list = list[:0]
+
+			for k, v := range res {
+				for _, cr := range m[k] {
+					cr.res <- cardResult{Card: v}
+				}
+				delete(m, k)
 			}
 
-			list = list[:0]
-			for k, v := range res {
-				api.cardResults[k] = cardResult{Card: v}
+			if err == nil {
+				err = errors.New("not found")
 			}
-			api.rm.Unlock()
+			for _, v := range m {
+				for _, cr := range v {
+					cr.res <- cardResult{err: err}
+				}
+			}
 		}
 		for {
 			select {
@@ -250,7 +260,7 @@ func (api *API) Collection(ids []string) (map[string]Card, error) {
 		return nil, fmt.Errorf("received status code %s", res.Status)
 	}
 
-	col := collectionResponse{make([]Card, 0, len(ids))}
+	col := collectionResponse{}
 	dec := json.NewDecoder(res.Body)
 	gerr := dec.Decode(&col)
 
