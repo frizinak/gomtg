@@ -622,43 +622,6 @@ ignored if -ia is passed. {fn} is replaced by the filename and {pid} with the pr
 		clr := colors.Get("bad")
 		print(fmt.Sprintf("%s%s\033[0m", clr, err.Error()))
 	}
-	flush := func() {
-		fmt.Print("\033[2J\033[0;0H")
-		output[0] = state.StringShort(colors) + "\n"
-		fmt.Print(strings.Join(output, "\n"))
-		output = make([]string, 1, 30)
-	}
-
-	queue := []State{state}
-
-	modifyState := func(undoable bool, cb func(s State) State) {
-		ostate := state
-		state = cb(state)
-		if state.PrevMode != ostate.Mode && ostate.Mode.ValidInput() {
-			state.PrevMode = ostate.Mode
-			state.PageOffset = 0
-		}
-		if undoable && !ostate.Equal(state) {
-			queue = append(queue, state)
-		}
-	}
-
-	lastImageListID := ""
-	printSets := func(filter string) {
-		filter = strings.ToLower(filter)
-		list := make([]string, 0, len(sets))
-		for k, v := range sets {
-			v := fmt.Sprintf("%s: %s", k, v)
-			if filter != "" && !strings.Contains(strings.ToLower(v), filter) {
-				continue
-			}
-			list = append(list, v)
-		}
-		sort.Strings(list)
-		for _, item := range list {
-			print(item)
-		}
-	}
 
 	cardByUUID := func(uuid mtgjson.UUID) (card mtgjson.Card, ok bool) {
 		var ix int
@@ -730,11 +693,12 @@ ignored if -ia is passed. {fn} is replaced by the filename and {pid} with the pr
 				return
 			}
 
-			res, err := skry.Card(id)
+			res, err := skry.CardDeferred(id)
 			pricingMutex.Lock()
 			defer pricingMutex.Unlock()
 			delete(pricingBusy, uuid)
 			if err != nil {
+				fmt.Fprintln(os.Stderr, err)
 				pricing[uuid] = p
 				return
 			}
@@ -757,6 +721,44 @@ ignored if -ia is passed. {fn} is replaced by the filename and {pid} with the pr
 		p := getFullPricing(uuid, fetch, false, false)
 		v := pricingValue(p, foil)
 		return v, v != 0 && time.Since(p.T) <= skryfall.PricingOutdated
+	}
+
+	flush := func() {
+		fmt.Print("\033[2J\033[0;0H")
+		output[0] = state.StringShort(colors, getPricing) + "\n"
+		fmt.Print(strings.Join(output, "\n"))
+		output = make([]string, 1, 30)
+	}
+
+	queue := []State{state}
+
+	modifyState := func(undoable bool, cb func(s State) State) {
+		ostate := state
+		state = cb(state)
+		if state.PrevMode != ostate.Mode && ostate.Mode.ValidInput() {
+			state.PrevMode = ostate.Mode
+			state.PageOffset = 0
+		}
+		if undoable && !ostate.Equal(state) {
+			queue = append(queue, state)
+		}
+	}
+
+	lastImageListID := ""
+	printSets := func(filter string) {
+		filter = strings.ToLower(filter)
+		list := make([]string, 0, len(sets))
+		for k, v := range sets {
+			v := fmt.Sprintf("%s: %s", k, v)
+			if filter != "" && !strings.Contains(strings.ToLower(v), filter) {
+				continue
+			}
+			list = append(list, v)
+		}
+		sort.Strings(list)
+		for _, item := range list {
+			print(item)
+		}
 	}
 
 	printSkipped := func(n, max int) {

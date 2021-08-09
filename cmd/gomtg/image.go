@@ -80,6 +80,9 @@ func downloadImage(url string, w ...io.Writer) error {
 		return err
 	}
 	defer res.Body.Close()
+	if res.StatusCode != http.StatusOK {
+		return fmt.Errorf("downloading image failed with status code: %s", res.Status)
+	}
 	_, err = io.Copy(io.MultiWriter(w...), res.Body)
 	return err
 }

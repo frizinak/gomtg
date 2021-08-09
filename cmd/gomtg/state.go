@@ -180,7 +180,7 @@ func (s State) Equal(o State) bool {
 }
 
 func (s State) String(db *DB, colors Colors, getPricing getPricing) []string {
-	data := []string{s.StringShort(colors)}
+	data := []string{s.StringShort(colors, getPricing)}
 	selCards := make([]mtgjson.Card, len(s.Selection))
 	good, bad := colors.Get("good"), colors.Get("bad")
 	for i, c := range s.Selection {
@@ -225,13 +225,23 @@ func (s State) String(db *DB, colors Colors, getPricing getPricing) []string {
 	return data
 }
 
-func (s State) StringShort(colors Colors) string {
+func (s State) StringShort(colors Colors, getPricing getPricing) string {
 	clr := colors.Get("status")
 	modeClr := colors.Get("good")
 	d := make([]string, 3, 5)
 	d[0] = fmt.Sprintf("q:%s", strings.Join(s.Query, " "))
 	d[1] = fmt.Sprintf("set:%s", s.FilterSet)
 	d[2] = fmt.Sprintf("selected:%d", len(s.Selection))
+	if len(s.Local) != 0 {
+		outdated := 0
+		for _, c := range s.Local {
+			_, ok := getPricing(c.UUID(), c.Foil(), false)
+			if !ok {
+				outdated++
+			}
+		}
+		d = append(d, fmt.Sprintf("bad-prices:%d", outdated))
+	}
 	if len(s.Options) != 0 {
 		d = append(d, fmt.Sprintf("options:%d", len(s.Options)))
 	}
