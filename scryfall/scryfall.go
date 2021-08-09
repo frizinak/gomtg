@@ -18,6 +18,7 @@ const (
 	PricingOutdated   = time.Hour * 24
 	MaxPerCollections = 75
 	deferredIV        = time.Millisecond * 20
+	ratelimitIV       = time.Millisecond * 100
 )
 
 type cardResult struct {
@@ -108,7 +109,7 @@ func (api *API) Card(id string) (Card, error) {
 
 	res, err := api.c.Do(req)
 	go func() {
-		time.Sleep(time.Millisecond * 50)
+		time.Sleep(ratelimitIV)
 		<-api.rate
 	}()
 
@@ -245,7 +246,7 @@ func (api *API) Collection(ids []string) (map[string]Card, error) {
 
 	res, err := api.c.Do(req)
 	go func() {
-		time.Sleep(time.Millisecond * 50)
+		time.Sleep(ratelimitIV)
 		<-api.rate
 	}()
 
