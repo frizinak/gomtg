@@ -21,7 +21,7 @@ import (
 	"github.com/containerd/console"
 	"github.com/frizinak/gomtg/fuzzy"
 	"github.com/frizinak/gomtg/mtgjson"
-	"github.com/frizinak/gomtg/skryfall"
+	"github.com/frizinak/gomtg/scryfall"
 	"github.com/mattn/go-runewidth"
 	"github.com/nightlyone/lockfile"
 )
@@ -434,7 +434,7 @@ ignored if -ia is passed. {fn} is replaced by the filename and {pid} with the pr
 		os.Exit(1)
 	}
 
-	skry := skryfall.New(nil, time.Second*10)
+	scry := scryfall.New(nil, time.Second*10)
 	pricing := make(map[mtgjson.UUID]Pricing)
 	pricingBusy := make(map[mtgjson.UUID]struct{})
 	var pricingMutex sync.RWMutex
@@ -649,7 +649,7 @@ ignored if -ia is passed. {fn} is replaced by the filename and {pid} with the pr
 			v, ok := pricing[uuid]
 			if ok {
 				pv := pricingValue(v, false)
-				if pv != 0 && time.Since(v.T) < skryfall.PricingOutdated {
+				if pv != 0 && time.Since(v.T) < scryfall.PricingOutdated {
 					return v, true
 				}
 				if pv == 0 && time.Since(v.T) < time.Minute*5 {
@@ -693,7 +693,7 @@ ignored if -ia is passed. {fn} is replaced by the filename and {pid} with the pr
 				return
 			}
 
-			res, err := skry.CardDeferred(id)
+			res, err := scry.CardDeferred(id)
 			pricingMutex.Lock()
 			defer pricingMutex.Unlock()
 			delete(pricingBusy, uuid)
@@ -720,7 +720,7 @@ ignored if -ia is passed. {fn} is replaced by the filename and {pid} with the pr
 	getPricing := func(uuid mtgjson.UUID, foil, fetch bool) (float64, bool) {
 		p := getFullPricing(uuid, fetch, false, false)
 		v := pricingValue(p, foil)
-		return v, v != 0 && time.Since(p.T) <= skryfall.PricingOutdated
+		return v, v != 0 && time.Since(p.T) <= scryfall.PricingOutdated
 	}
 
 	flush := func() {

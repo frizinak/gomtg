@@ -1,4 +1,4 @@
-package skryfall
+package scryfall
 
 import (
 	"bytes"
