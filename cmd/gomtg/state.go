@@ -9,6 +9,8 @@ import (
 )
 
 type State struct {
+	Query []string
+
 	Mode       Mode
 	PrevMode   Mode
 	FilterSet  mtgjson.SetID
@@ -226,9 +228,10 @@ func (s State) String(db *DB, colors Colors, getPricing getPricing) []string {
 func (s State) StringShort(colors Colors) string {
 	clr := colors.Get("status")
 	modeClr := colors.Get("good")
-	d := make([]string, 2, 4)
-	d[0] = fmt.Sprintf("set:%s", s.FilterSet)
-	d[1] = fmt.Sprintf("selected:%d", len(s.Selection))
+	d := make([]string, 3, 5)
+	d[0] = fmt.Sprintf("q:%s", strings.Join(s.Query, " "))
+	d[1] = fmt.Sprintf("set:%s", s.FilterSet)
+	d[2] = fmt.Sprintf("selected:%d", len(s.Selection))
 	if len(s.Options) != 0 {
 		d = append(d, fmt.Sprintf("options:%d", len(s.Options)))
 	}

@@ -941,6 +941,7 @@ ignored if -ia is passed. {fn} is replaced by the filename and {pid} with the pr
 			print("/sets <filter>                print all known sets (optionally filtered)")
 			print("/sort <sort>                  sort items by index, name, count or price")
 			print("/undo   | /u                  remove last item from queue")
+			print("/reset                        reset query")
 			print("/images | /imgs               create a collage of all cards in current view")
 			print("/image  | /img <uuid>         show card image for card with (partial) UUID <uuid>")
 			print("/prices                       refresh pricing data (async) for cards in collection")
@@ -982,6 +983,11 @@ ignored if -ia is passed. {fn} is replaced by the filename and {pid} with the pr
 			}
 			state = queue[len(queue)-1]
 			return _commandQ(nil)
+		},
+		"reset": func([]string) error {
+			state.Query = nil
+			printOptions()
+			return nil
 		},
 		"commit": func([]string) error {
 			selection := state.Selection
@@ -1099,6 +1105,7 @@ ignored if -ia is passed. {fn} is replaced by the filename and {pid} with the pr
 			}
 
 			modifyState(true, func(s State) State {
+				s.Query = nil
 				if s.Mode != m {
 					s.Local = nil
 					s.Options = nil
@@ -1269,6 +1276,7 @@ ignored if -ia is passed. {fn} is replaced by the filename and {pid} with the pr
 
 			printAlert(fmt.Sprintf("Deleted %d cards", len(state.Local)))
 			modifyState(true, func(s State) State {
+				s.Query = nil
 				s.Delete = append(s.Delete, s.Local...)
 				s.Local = nil
 				s.Options = nil
@@ -1310,7 +1318,8 @@ ignored if -ia is passed. {fn} is replaced by the filename and {pid} with the pr
 		return isCommand, nil
 	}
 
-	searchAll := func(qry string) []mtgjson.Card {
+	searchAll := func() []mtgjson.Card {
+		qry := strings.Join(state.Query, " ")
 		res := fuzz.Search(qry, func(score, min, max int) bool {
 			return score > 0 && score == max
 		})
@@ -1326,8 +1335,23 @@ ignored if -ia is passed. {fn} is replaced by the filename and {pid} with the pr
 		return list
 	}
 
-	numericRE := regexp.MustCompile(`^\d[\d,\- ]+$`)
-	searchLocal := func(qry []string) ([]LocalCard, error) {
+	numericRE := regexp.MustCompile(`^\d+[,\-]?\d*$`)
+	searchLocal := func() ([]LocalCard, error) {
+		var lastNumeric string
+		for i := 0; i < len(state.Query); i++ {
+			if numericRE.MatchString(state.Query[i]) {
+				lastNumeric = state.Query[i]
+				state.Query = append(state.Query[:i], state.Query[i+1:]...)
+				i--
+			}
+		}
+		filters := []func(c LocalCard) bool{
+			func(c LocalCard) bool {
+				return state.FilterSet == "" || c.SetID() == state.FilterSet
+			},
+		}
+
+		qry := state.Query
 		qryTags := make([]string, 0, len(qry))
 		qryNotTags := make([]string, 0, len(qry))
 		_qryStr := make([]string, 0, len(qry))
@@ -1345,18 +1369,8 @@ ignored if -ia is passed. {fn} is replaced by the filename and {pid} with the pr
 		}
 		qryStr := strings.Join(_qryStr, " ")
 
-		noTags := len(qryTags) == 0 && len(qryNotTags) == 0
-
-		filter := func(c *Card) bool {
-			return state.FilterSet == "" || c.SetID() == state.FilterSet
-		}
-
-		if !noTags {
-			ofilter := filter
-			filter = func(c *Card) bool {
-				if !ofilter(c) {
-					return false
-				}
+		if len(qryTags) != 0 || len(qryNotTags) != 0 {
+			filters = append(filters, func(c LocalCard) bool {
 				for _, t := range qryTags {
 					if !c.HasTag(t) {
 						return false
@@ -1368,7 +1382,7 @@ ignored if -ia is passed. {fn} is replaced by the filename and {pid} with the pr
 					}
 				}
 				return true
-			}
+			})
 		}
 
 		search := func() []int {
@@ -1386,17 +1400,21 @@ ignored if -ia is passed. {fn} is replaced by the filename and {pid} with the pr
 				}
 				return list
 			}
-		} else if numericRE.MatchString(qryStr) {
-			ints, ok := intRange(qryStr)
-			if ok {
-				search = func() []int {
-					res := make([]int, len(ints))
-					for i, n := range ints {
-						res[i] = n - 1
-					}
-					return res
-				}
+		}
+
+		if lastNumeric != "" {
+			ints, ok := intRange(lastNumeric)
+			m := make(map[int]struct{}, len(ints))
+			for _, i := range ints {
+				m[i-1] = struct{}{}
 			}
+			if ok {
+				filters = append(filters, func(c LocalCard) bool {
+					_, ok := m[c.Index]
+					return ok
+				})
+			}
+			state.Query = append(state.Query, lastNumeric)
 		}
 
 		res := search()
@@ -1406,8 +1424,16 @@ ignored if -ia is passed. {fn} is replaced by the filename and {pid} with the pr
 			if !ok {
 				continue
 			}
-			if filter(c) {
-				list = append(list, NewLocalCard(c, ix))
+			ok = true
+			lc := NewLocalCard(c, ix)
+			for _, f := range filters {
+				if !f(lc) {
+					ok = false
+					break
+				}
+			}
+			if ok {
+				list = append(list, lc)
 			}
 		}
 
@@ -1426,7 +1452,10 @@ ignored if -ia is passed. {fn} is replaced by the filename and {pid} with the pr
 
 		switch state.Mode {
 		case ModeCollection:
-			options, err := searchLocal(fields)
+			if line != "" {
+				state.Query = append(state.Query, fields...)
+			}
+			options, err := searchLocal()
 			if err != nil {
 				printErr(err)
 				return
@@ -1456,11 +1485,14 @@ ignored if -ia is passed. {fn} is replaced by the filename and {pid} with the pr
 
 		case ModeSearch:
 			state.Filtered = true
-			if line == "" {
-				printOptions()
-				return
+			//if line == "" {
+			//	printOptions()
+			//	return
+			//}
+			if line != "" {
+				state.Query = append(state.Query, fields...)
 			}
-			options := searchAll(line)
+			options := searchAll()
 			if len(options) == 0 {
 				printErr(errors.New("no results"))
 				return
@@ -1480,8 +1512,9 @@ ignored if -ia is passed. {fn} is replaced by the filename and {pid} with the pr
 			if line == "" {
 				return
 			}
+			state.Query = append(state.Query, fields...)
 
-			options := searchAll(line)
+			options := searchAll()
 			if len(options) == 0 {
 				printErr(errors.New("no results"))
 				return
@@ -1490,6 +1523,7 @@ ignored if -ia is passed. {fn} is replaced by the filename and {pid} with the pr
 				return
 			} else if len(options) < 100 {
 				modifyState(true, func(s State) State {
+					s.Query = nil
 					s.Options = options
 					s.Mode = ModeSelect
 					return s
@@ -1608,13 +1642,14 @@ ignored if -ia is passed. {fn} is replaced by the filename and {pid} with the pr
 	for {
 		select {
 		case <-cancelCh:
-
 			modifyState(true, func(s State) State {
 				switch s.Mode {
 				case ModeSelect:
 					s.Mode = s.PrevMode
 					s.Options = nil
 					s.Local = nil
+				default:
+					s.Query = nil
 				}
 				return s
 			})
