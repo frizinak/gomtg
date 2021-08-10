@@ -579,6 +579,24 @@ ignored if -ia is passed. {fn} is replaced by the filename and {pid} with the pr
 		}
 	}()
 
+	fullData := make(map[mtgjson.UUID]mtgjson.FullCard)
+	getFullCard := func(uuid mtgjson.UUID) (mtgjson.FullCard, error) {
+		var fc mtgjson.FullCard
+		if len(fullData) == 0 {
+			data, err := loadData(dest)
+			if err != nil {
+				return fc, err
+			}
+			for _, c := range data.FilterOnlineOnly(false).FullCards() {
+				fullData[c.UUID] = c
+			}
+		}
+		if fc, ok := fullData[uuid]; ok {
+			return fc, nil
+		}
+		return fc, fmt.Errorf("no card with uuid %s", uuid)
+	}
+
 	var fuzz *fuzzy.Index
 	exit(progress("Create full index", func() error {
 		list := make([]string, 0)
@@ -915,9 +933,6 @@ ignored if -ia is passed. {fn} is replaced by the filename and {pid} with the pr
 		return nil
 	}
 
-	refreshCh := make(chan struct{}, 1)
-	refresh := func() { go func() { refreshCh <- struct{}{} }() }
-
 	warnedUnsaved := false
 	warnUnsaved := func() bool {
 		if warnedUnsaved {
@@ -943,9 +958,10 @@ ignored if -ia is passed. {fn} is replaced by the filename and {pid} with the pr
 			print("/sets <filter>                print all known sets (optionally filtered)")
 			print("/sort <sort>                  sort items by index, name, count or price")
 			print("/undo   | /u                  remove last item from queue")
-			print("/reset                        reset query")
+			print("/reset  | /all                reset query")
 			print("/images | /imgs               create a collage of all cards in current view")
 			print("/image  | /img <uuid>         show card image for card with (partial) UUID <uuid>")
+			print("/info <uuid>                  show card details for card with (partial UUID <uuid>")
 			print("/prices                       refresh pricing data (async) for cards in collection")
 			print("/price <uuid>                 show pricing for card with (partial) UUID")
 			print("/tag  {+|-}<tag>,…            tag/untag cards in collection with <tag> or tag all future cards added with <tag>")
@@ -1087,6 +1103,75 @@ ignored if -ia is passed. {fn} is replaced by the filename and {pid} with the pr
 			printAlert(fmt.Sprintf("Downloaded image to '%s'", imagePath))
 			return spawnViewer(imageCommand, imageRefreshCommand, imageAutoReload, imagePath)
 		},
+		"info": func(a []string) error {
+			if len(a) != 1 || len(a[0]) == 0 {
+				return errors.New("/info requires exactly 1 argument")
+			}
+			c, err := partialUUID(a[0])
+			if err != nil {
+				return err
+			}
+			card, err := getFullCard(c.UUID)
+			if err != nil {
+				return err
+			}
+
+			data := make([]string, 6, 10)
+			data[0] = fmt.Sprintf("%s: %s", card.SetCode, sets[card.SetCode])
+			var pt string
+			if card.Power != "" && card.Toughness != "" {
+				pt = fmt.Sprintf("%2s/%-2s", card.Power, card.Toughness)
+			}
+			data[2] = fmt.Sprintf("%-30s %12s %-6s", card.Name, card.ManaCost, pt)
+
+			data[4] = fmt.Sprintf("Type: %s", strings.Join(card.Types, "|"))
+
+			data = append(data, strings.Split(card.Text, "\n")...)
+			data = append(data, "")
+			if len(card.Rulings) != 0 {
+				data = append(data, "Rulings:")
+				for _, r := range card.Rulings {
+					data = append(data, "  "+string(r.Date))
+					for _, t := range strings.Split(r.Text, "\n") {
+						data = append(data, "  "+t)
+					}
+				}
+				data = append(data, "")
+			}
+
+			if len(card.Keywords) != 0 {
+				data = append(data, "Keywords: "+strings.Join(card.Keywords, "|"))
+			}
+
+			special := make([]string, 0, 2)
+			if card.IsReserved {
+				special = append(special, "Reserved")
+			}
+			if card.IsPromo {
+				special = append(special, "Promo")
+			}
+			if card.IsAlternative {
+				special = append(special, "Alternative")
+			}
+			if card.IsOversized {
+				special = append(special, "Oversized")
+			}
+			reprint := "Reprint"
+			if !card.IsReprint {
+				reprint = "First print"
+			}
+			special = append(special, reprint)
+
+			if len(special) != 0 {
+				data = append(data, "", strings.Join(special, "|"))
+			}
+
+			data = append(data, "", fmt.Sprintf("Artist: %s", card.Artist))
+
+			print(data...)
+
+			return nil
+		},
 		"mode": func(args []string) error {
 			arg := ""
 			if len(args) > 0 {
@@ -1115,7 +1200,6 @@ ignored if -ia is passed. {fn} is replaced by the filename and {pid} with the pr
 				s.Mode = m
 				return s
 			})
-			refresh()
 
 			return nil
 		},
@@ -1297,6 +1381,7 @@ ignored if -ia is passed. {fn} is replaced by the filename and {pid} with the pr
 	commands["s"] = commands["set"]
 	commands["q"] = commands["queue"]
 	commands["r"] = commands["repeat"]
+	commands["all"] = commands["reset"]
 	commands["del"] = commands["delete"]
 
 	var handleCommand func(f []string) (bool, error)
@@ -1593,23 +1678,6 @@ ignored if -ia is passed. {fn} is replaced by the filename and {pid} with the pr
 		}()
 	}
 
-	for _, arg := range flag.Args() {
-		print(fmt.Sprintf("> %s", arg))
-		handleInputLine(arg)
-	}
-
-	inputCh := make(chan string, 1)
-	go func() {
-		for {
-			scan := bufio.NewScanner(os.Stdin)
-			scan.Split(bufio.ScanLines)
-			for scan.Scan() {
-				inputCh <- scan.Text()
-			}
-			exit(scan.Err())
-		}
-	}()
-
 	prompt := func() {
 		switch state.Mode {
 		case ModeAdd:
@@ -1639,11 +1707,32 @@ ignored if -ia is passed. {fn} is replaced by the filename and {pid} with the pr
 		flush()
 	}
 
-	prompt()
-	refresh()
+	inputCh := make(chan string, 1)
+	args := flag.Args()
+	go func() {
+		if len(args) == 0 {
+			args = append(args, "")
+		}
+		for _, arg := range args {
+			inputCh <- arg
+		}
+	}()
+
+	go func() {
+		for {
+			scan := bufio.NewScanner(os.Stdin)
+			scan.Split(bufio.ScanLines)
+			for scan.Scan() {
+				inputCh <- scan.Text()
+			}
+			exit(scan.Err())
+		}
+	}()
+
 	for {
 		select {
 		case <-cancelCh:
+			fmt.Fprintln(os.Stderr, 1)
 			modifyState(true, func(s State) State {
 				switch s.Mode {
 				case ModeSelect:
@@ -1655,9 +1744,6 @@ ignored if -ia is passed. {fn} is replaced by the filename and {pid} with the pr
 				}
 				return s
 			})
-			prompt()
-		case <-refreshCh:
-			handleInputLine("")
 			prompt()
 		case txt := <-inputCh:
 			handleInputLine(txt)
