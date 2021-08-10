@@ -7,8 +7,14 @@ import (
 	"github.com/frizinak/gomtg/mtgjson"
 )
 
-func loadData(file string) (mtgjson.AllPrintings, error) {
-	if _, err := os.Stat(file); err != nil {
+func loadData(file string, refresh bool) (mtgjson.AllPrintings, error) {
+	if !refresh {
+		_, err := os.Stat(file)
+		if err != nil {
+			refresh = true
+		}
+	}
+	if refresh {
 		destJSON := file + ".json"
 		err := progress("Download mtgjson.com data", func() error {
 			w, err := os.Create(destJSON)

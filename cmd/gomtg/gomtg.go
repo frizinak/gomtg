@@ -562,50 +562,65 @@ ignored if -ia is passed. {fn} is replaced by the filename and {pid} with the pr
 
 	var cards []mtgjson.Card
 	var byUUID map[mtgjson.UUID]int
-	sets := make(map[mtgjson.SetID]string)
-	func() {
-		data, err := loadData(dest)
-		exit(err)
+	var sets map[mtgjson.SetID]string
+	var fullDataLoad bool
+	var fullData map[mtgjson.UUID]mtgjson.FullCard
+	var fuzz *fuzzy.Index
+	reloadData := func(refresh bool) error {
+		data, err := loadData(dest, refresh)
+		if err != nil {
+			return err
+		}
 
-		exit(progress("Filter paper cards", func() error {
+		err = progress("Filter paper cards", func() error {
 			data = data.FilterOnlineOnly(false)
 			cards = data.Cards()
 			byUUID = mtgjson.ByUUID(cards)
 			return nil
-		}))
+		})
+		if err != nil {
+			return err
+		}
 
+		sets = make(map[mtgjson.SetID]string)
 		for i := range data {
 			sets[i] = data[i].Name
 		}
-	}()
 
-	fullData := make(map[mtgjson.UUID]mtgjson.FullCard)
-	getFullCard := func(uuid mtgjson.UUID) (mtgjson.FullCard, error) {
-		var fc mtgjson.FullCard
-		if len(fullData) == 0 {
-			data, err := loadData(dest)
-			if err != nil {
-				return fc, err
-			}
-			for _, c := range data.FilterOnlineOnly(false).FullCards() {
+		if fullDataLoad {
+			fullData = make(map[mtgjson.UUID]mtgjson.FullCard)
+			for _, c := range data.FullCards() {
 				fullData[c.UUID] = c
 			}
+		}
+
+		err = progress("Create full index", func() error {
+			list := make([]string, 0)
+			for _, card := range cards {
+				list = append(list, card.Name)
+			}
+			fuzz = fuzzy.NewIndex(2, list)
+			return nil
+		})
+		if err != nil {
+			return err
+		}
+		return nil
+	}
+
+	exit(reloadData(false))
+
+	getFullCard := func(uuid mtgjson.UUID) (mtgjson.FullCard, error) {
+		var fc mtgjson.FullCard
+		fullDataLoad = true
+		if len(fullData) == 0 {
+			reloadData(false)
 		}
 		if fc, ok := fullData[uuid]; ok {
 			return fc, nil
 		}
 		return fc, fmt.Errorf("no card with uuid %s", uuid)
 	}
-
-	var fuzz *fuzzy.Index
-	exit(progress("Create full index", func() error {
-		list := make([]string, 0)
-		for _, card := range cards {
-			list = append(list, card.Name)
-		}
-		fuzz = fuzzy.NewIndex(2, list)
-		return nil
-	}))
 
 	state := State{Mode: ModeCollection, Sort: SortIndex}
 	output := make([]string, 1, 30)
@@ -955,6 +970,7 @@ ignored if -ia is passed. {fn} is replaced by the filename and {pid} with the pr
 			print("/help                         this")
 			print("/exit   | /quit               quit")
 			print("/queue  | /q                  view operation queue")
+			print("/update                       update mtgjson.com data")
 			print("/sets <filter>                print all known sets (optionally filtered)")
 			print("/sort <sort>                  sort items by index, name, count or price")
 			print("/undo   | /u                  remove last item from queue")
@@ -1005,6 +1021,13 @@ ignored if -ia is passed. {fn} is replaced by the filename and {pid} with the pr
 		"reset": func([]string) error {
 			state.Query = nil
 			printOptions()
+			return nil
+		},
+		"update": func([]string) error {
+			if err := reloadData(true); err != nil {
+				return err
+			}
+			printAlert("Data updated")
 			return nil
 		},
 		"commit": func([]string) error {
