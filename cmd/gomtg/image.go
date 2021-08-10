@@ -88,12 +88,19 @@ func downloadImage(url string, w ...io.Writer) error {
 }
 
 func getImageCached(url string, dir string) (image.Image, error) {
+	return _getImageCached(url, dir, true)
+}
+
+func _getImageCached(url string, dir string, decode bool) (image.Image, error) {
 	s := sha256.Sum256([]byte(url))
 	h := hex.EncodeToString(s[:])
 	path := filepath.Join(dir, h+".jpg")
 	f, err := os.Open(path)
 	if err == nil {
 		defer f.Close()
+		if !decode {
+			return nil, nil
+		}
 		img, _, err := image.Decode(f)
 		return img, err
 	}
@@ -105,16 +112,26 @@ func getImageCached(url string, dir string) (image.Image, error) {
 		if err != nil {
 			return nil, err
 		}
-		pr, pw := io.Pipe()
+		var pr io.Reader
+		writers := []io.Writer{f}
+		if decode {
+			var pw io.WriteCloser
+			pr, pw = io.Pipe()
+			writers = append(writers, pw)
+		}
 		var gerr error
 		done := make(chan struct{}, 1)
 		go func() {
-			err := downloadImage(url, f, pw)
-			f.Close()
-			pw.Close()
+			err := downloadImage(url, writers...)
+			for _, w := range writers {
+				if c, ok := w.(io.Closer); ok {
+					c.Close()
+				}
+			}
 			if err != nil {
 				gerr = err
 				os.Remove(tmp)
+				done <- struct{}{}
 				return
 			}
 			gerr = os.Rename(tmp, path)
@@ -123,6 +140,12 @@ func getImageCached(url string, dir string) (image.Image, error) {
 			}
 			done <- struct{}{}
 		}()
+
+		if pr == nil {
+			<-done
+			return nil, gerr
+		}
+
 		img, _, err := image.Decode(pr)
 		if err != nil {
 			return nil, err
