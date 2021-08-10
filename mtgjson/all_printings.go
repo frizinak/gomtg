@@ -6,44 +6,6 @@ import (
 	"sort"
 )
 
-type SetID string
-type BorderColor string
-type Color string
-type Colors []Color
-type FrameEffect string
-type Keywords []string
-type Layout string
-type Rarity string
-type UUID string
-type Time string
-type Availability []string
-
-func (a Availability) Paper() bool {
-	for _, v := range a {
-		if v == "paper" {
-			return true
-		}
-	}
-
-	return false
-}
-
-type ID struct {
-	CardKingdomFoilId      string `json:"cardKingdomFoilId"`
-	CardKingdomId          string `json:"cardKingdomId"`
-	McmId                  string `json:"mcmId"`
-	McmMetaId              string `json:"mcmMetaId"`
-	MtgArenaId             string `json:"mtgArenaId"`
-	MtgoFoilId             string `json:"mtgoFoilId"`
-	MtgoId                 string `json:"mtgoId"`
-	MtgjsonV4Id            string `json:"mtgjsonV4Id"`
-	MultiverseId           string `json:"multiverseId"`
-	ScryfallId             string `json:"scryfallId"`
-	ScryfallOracleId       string `json:"scryfallOracleId"`
-	ScryfallIllustrationId string `json:"scryfallIllustrationId"`
-	TcgplayerProductId     string `json:"tcgplayerProductId"`
-}
-
 type Data struct {
 	Type             string `json:"type"`
 	ReleaseDate      Time   `json:"releaseDate"`
@@ -77,64 +39,64 @@ type Card struct {
 
 type FullCard struct {
 	Card
-	// Artist                  string        `json:"artist"`
-	ASCII                   string        `json:"asciiName"`
-	BorderColor             BorderColor   `json:"borderColor"`
-	ColorIdentity           Colors        `json:"colorIdentity"`
-	ColorIndicator          Colors        `json:"colorIndicator"`
-	Colors                  Colors        `json:"colors"`
-	ConvertedManaCost       float64       `json:"convertedManaCost"`
-	FaceConvertedManaCost   float64       `json:"faceConvertedManaCost"`
-	FaceName                string        `json:"faceName"`
-	FlavorName              string        `json:"flavorName"`
-	FlavorText              string        `json:"flavorText"`
-	FrameEffects            []FrameEffect `json:"frameEffects"`
-	FrameVersion            string        `json:"frameVersion"`
-	Hand                    string        `json:"hand"`
-	HasContentWarning       bool          `json:"hasContentWarning"`
-	HasFoil                 bool          `json:"hasFoil"`
-	HasAlternativeDeckLimit bool          `json:"hasAlternativeDeckLimit"`
-	HasNonFoil              bool          `json:"hasNonFoil"`
-	IsAlternative           bool          `json:"isAlternative"`
-	IsFullArt               bool          `json:"isFullArt"`
-	IsOnlineOnly            bool          `json:"isOnlineOnly"`
-	IsOversized             bool          `json:"isOversized"`
-	IsPromo                 bool          `json:"isPromo"`
-	IsReprint               bool          `json:"isReprint"`
-	IsReserved              bool          `json:"isReserved"`
-	IsStarter               bool          `json:"isStarter"`
-	IsStorySpotlight        bool          `json:"isStorySpotlight"`
-	IsTextless              bool          `json:"isTextless"`
-	IsTimeshifted           bool          `json:"isTimeshifted"`
-	Keywords                Keywords      `json:"keywords"`
-	Layout                  Layout        `json:"layout"`
-	Life                    string        `json:"life"`
-	Loyalty                 string        `json:"loyalty"`
-	ManaCost                string        `json:"manaCost"`
-	Number                  string        `json:"number"`
-	OriginalReleaseDate     Time          `json:"originalReleaseDate"`
-	OriginalText            string        `json:"originalText"`
-	OriginalType            string        `json:"originalType"`
-	OtherFaceIds            []UUID        `json:"otherFaceIds"`
-	Power                   string        `json:"power"`
-	Printings               []SetID       `json:"printings"`
-	PromoTypes              []string      `json:"promoTypes"`
-	Rarity                  Rarity        `json:"rarity"`
-	Side                    string        `json:"side"`
-	Subtypes                []string      `json:"subtypes"`
-	Supertypes              []string      `json:"supertypes"`
-	Text                    string        `json:"text"`
-	Toughness               string        `json:"toughness"`
-	Type                    string        `json:"type"`
-	Types                   []string      `json:"types"`
-	Variations              []UUID        `json:"variations"`
-	// Watermark               string        `json:"watermark"`
-	// PurchaseUrls        `json:"purchaseUrls"`
-	// LeadershipSkills        `json:"leadershipSkills"`
-	// Legalities              `json:"legalities"`
-	// Rulings    `json:"rulings"`
-	// EDHRECRank int `json:"edhrecRank"`
-	// ForeignData             `json:"foreignData"`
+	Artist                  string           `json:"artist"`
+	ASCII                   string           `json:"asciiName"`
+	BorderColor             BorderColor      `json:"borderColor"`
+	ColorIdentity           Colors           `json:"colorIdentity"`
+	ColorIndicator          Colors           `json:"colorIndicator"`
+	Colors                  Colors           `json:"colors"`
+	ConvertedManaCost       float64          `json:"convertedManaCost"`
+	FaceConvertedManaCost   float64          `json:"faceConvertedManaCost"`
+	FaceName                string           `json:"faceName"`
+	FlavorName              string           `json:"flavorName"`
+	FlavorText              string           `json:"flavorText"`
+	FrameEffects            []FrameEffect    `json:"frameEffects"`
+	FrameVersion            string           `json:"frameVersion"`
+	Hand                    string           `json:"hand"`
+	HasContentWarning       bool             `json:"hasContentWarning"`
+	HasFoil                 bool             `json:"hasFoil"`
+	HasAlternativeDeckLimit bool             `json:"hasAlternativeDeckLimit"`
+	HasNonFoil              bool             `json:"hasNonFoil"`
+	IsAlternative           bool             `json:"isAlternative"`
+	IsFullArt               bool             `json:"isFullArt"`
+	IsOnlineOnly            bool             `json:"isOnlineOnly"`
+	IsOversized             bool             `json:"isOversized"`
+	IsPromo                 bool             `json:"isPromo"`
+	IsReprint               bool             `json:"isReprint"`
+	IsReserved              bool             `json:"isReserved"`
+	IsStarter               bool             `json:"isStarter"`
+	IsStorySpotlight        bool             `json:"isStorySpotlight"`
+	IsTextless              bool             `json:"isTextless"`
+	IsTimeshifted           bool             `json:"isTimeshifted"`
+	Keywords                Keywords         `json:"keywords"`
+	Layout                  Layout           `json:"layout"`
+	Life                    string           `json:"life"`
+	Loyalty                 string           `json:"loyalty"`
+	ManaCost                string           `json:"manaCost"`
+	Number                  string           `json:"number"`
+	OriginalReleaseDate     Time             `json:"originalReleaseDate"`
+	OriginalText            string           `json:"originalText"`
+	OriginalType            string           `json:"originalType"`
+	OtherFaceIds            []UUID           `json:"otherFaceIds"`
+	Power                   string           `json:"power"`
+	Printings               []SetID          `json:"printings"`
+	PromoTypes              []string         `json:"promoTypes"`
+	Rarity                  Rarity           `json:"rarity"`
+	Side                    string           `json:"side"`
+	Subtypes                []string         `json:"subtypes"`
+	Supertypes              []string         `json:"supertypes"`
+	Text                    string           `json:"text"`
+	Toughness               string           `json:"toughness"`
+	Type                    string           `json:"type"`
+	Types                   []string         `json:"types"`
+	Variations              []UUID           `json:"variations"`
+	Watermark               string           `json:"watermark"`
+	PurchaseURLs            PurchaseURLs     `json:"purchaseUrls"`
+	LeadershipSkills        LeadershipSkills `json:"leadershipSkills"`
+	Legalities              Legalities       `json:"legalities"`
+	Rulings                 []Ruling         `json:"rulings"`
+	EDHRECRank              int              `json:"edhrecRank"`
+	ForeignData             []ForeignData    `json:"foreignData"`
 }
 
 func (c Card) ImageURLScryfall(back bool, size string) (string, error) {
