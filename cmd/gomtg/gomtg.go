@@ -347,6 +347,7 @@ func main() {
 		os.Exit(0)
 	}
 	dir := filepath.Join(cacheDir, "gomtg")
+	exportDir := filepath.Join(dir, "exports")
 	dest := filepath.Join(dir, "v5-all-printings.gob")
 	imagePath := filepath.Join(dir, "options.jpg")
 	imageDir := filepath.Join(dir, "images")
@@ -411,6 +412,7 @@ ignored if -ia is passed. {fn} is replaced by the filename and {pid} with the pr
 	}
 
 	_ = os.MkdirAll(dir, 0700)
+	_ = os.MkdirAll(exportDir, 0700)
 	_ = os.MkdirAll(filepath.Dir(dbFile), 0700)
 	_ = os.MkdirAll(imageDir, 0700)
 
@@ -997,6 +999,7 @@ ignored if -ia is passed. {fn} is replaced by the filename and {pid} with the pr
 			print("/repeat | /r                  add last card again")
 			print("/delete | /del                remove cards from collection in current view")
 			print("/set    | /s <set>            only operate on cards within the given set")
+			print("/csv                          export cards in current collection view as csv")
 			return nil
 		},
 		"exit": func([]string) error {
@@ -1020,7 +1023,8 @@ ignored if -ia is passed. {fn} is replaced by the filename and {pid} with the pr
 		},
 		"reset": func([]string) error {
 			state.Query = nil
-			printOptions()
+			state.Filtered = false
+			//printOptions()
 			return nil
 		},
 		"update": func([]string) error {
@@ -1077,6 +1081,17 @@ ignored if -ia is passed. {fn} is replaced by the filename and {pid} with the pr
 		},
 		"sets": func(args []string) error {
 			printSets(strings.Join(args, " "))
+			return nil
+		},
+		"csv": func([]string) error {
+			if state.Mode != ModeCollection {
+				return errors.New("/export can only be used from /mode collection")
+			}
+			file, err := exportCSV(state.Local, exportDir)
+			if err != nil {
+				return err
+			}
+			printAlert(fmt.Sprintf("exported to: %s", file))
 			return nil
 		},
 		"images": func([]string) error {
@@ -1622,7 +1637,7 @@ ignored if -ia is passed. {fn} is replaced by the filename and {pid} with the pr
 			if line == "" {
 				return
 			}
-			state.Query = append(state.Query, fields...)
+			state.Query = fields
 
 			options := searchAll()
 			if len(options) == 0 {
