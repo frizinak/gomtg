@@ -871,7 +871,7 @@ ignored if -ia is passed. {fn} is replaced by the filename and {pid} with the pr
 	}
 
 	partialUUID := func(str string) (Card, error) {
-		list := make([]Card, 0, 1)
+		var result Card
 		add := func(c Card) error {
 			if !strings.Contains(
 				strings.ToLower(string(c.UUID)),
@@ -880,48 +880,35 @@ ignored if -ia is passed. {fn} is replaced by the filename and {pid} with the pr
 				return nil
 			}
 
-			identical := true
-			var value mtgjson.UUID
-			for _, c := range list {
-				if value == "" {
-					value = c.UUID
-				}
-				if c.UUID != value {
-					identical = false
-					break
-				}
-			}
-
-			if len(list) > 0 {
-				if !identical {
-					return errors.New("multiple cards match")
-				}
+			if result.UUID == "" {
+				result = c
 				return nil
 			}
-			list = append(list, c)
-			return nil
+			if result.UUID == c.UUID {
+				return nil
+			}
+			return errors.New("multiple cards match")
 		}
 
-		var match Card
 		for _, c := range state.Options {
 			if err := add(c); err != nil {
-				return match, err
+				return result, err
 			}
 		}
 
-		if len(list) == 0 {
+		if result.UUID == "" {
 			for _, c := range app.Cards.Cards {
 				if err := add(c); err != nil {
-					return match, err
+					return result, err
 				}
 			}
 		}
 
-		if len(list) == 0 {
-			return match, errors.New("no such card")
+		if result.UUID == "" {
+			return result, errors.New("no such card")
 		}
 
-		return list[0], nil
+		return result, nil
 	}
 
 	_commandQ := func([]string) error {
