@@ -23,6 +23,7 @@ type Card struct {
 	ColorIdentity mtgjson.Colors
 	ManaCost      string
 	Keywords      mtgjson.Keywords
+	Types         []string
 	dir           string
 }
 
@@ -151,6 +152,7 @@ func loadData(dir string, refresh bool) (*All, error) {
 						ColorIdentity: c.ColorIdentity,
 						ManaCost:      c.ManaCost,
 						Keywords:      c.Keywords,
+						Types:         c.Types,
 					},
 				)
 			}

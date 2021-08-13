@@ -143,8 +143,15 @@ func (s State) Equal(o State) bool {
 		len(s.Tags) != len(o.Tags) ||
 		len(s.Delete) != len(o.Delete) ||
 		len(s.Tagging) != len(o.Tagging) ||
+		len(s.Query) != len(o.Query) ||
 		len(s.Options) != len(o.Options) {
 		return false
+	}
+
+	for i := range s.Query {
+		if s.Query[i] != o.Query[i] {
+			return false
+		}
 	}
 
 	for i := range s.Selection {

@@ -394,10 +394,13 @@ func (a *App) LocalCardsString(cards []LocalCard, max int, uniq bool) []string {
 		prices = prices[s:]
 		cards = cards[s:]
 	}
+	strKeywords := func(l mtgjson.Keywords) string { return strings.Join(l, " | ") }
+	strTypes := func(l []string) string { return strings.Join(l, " | ") }
 
 	longestTitle := 0
 	longestMana := 0
 	longestKeywords := 0
+	longestType := 0
 	rcards := make([]Card, len(cards))
 	for i, c := range cards {
 		rc, ok := a.Cards.ByUUID(c.UUID())
@@ -415,18 +418,26 @@ func (a *App) LocalCardsString(cards []LocalCard, max int, uniq bool) []string {
 		if l > longestMana {
 			longestMana = l
 		}
-		l = len(c.Keywords.String())
+		l = len(strKeywords(c.Keywords))
 		if l > longestKeywords {
 			longestKeywords = l
+		}
+		l = len(strTypes(c.Types))
+		if l > longestType {
+			longestType = l
 		}
 	}
 	titlePad := strconv.Itoa(longestTitle)
 	manaPad := strconv.Itoa(longestMana)
 	kwPad := strconv.Itoa(longestKeywords)
+	typePad := strconv.Itoa(longestType)
 	bad := a.Colors.Get("bad")
 
 	p1 := "%6d \u2502 %s \u2502 %-5s \u2502 %-4d \u2502 %-" +
-		titlePad + "s \u2502 %-" + manaPad + "s \u2502 %-" + kwPad + "s "
+		titlePad + "s \u2502 %-" +
+		typePad + "s \u2502 %-" +
+		manaPad + "s \u2502 %-" +
+		kwPad + "s "
 	p2 := "\u2502%s %" + pricePad + "s \033[0m\u2502 %s"
 
 	p1Len := 0
@@ -447,8 +458,9 @@ func (a *App) LocalCardsString(cards []LocalCard, max int, uniq bool) []string {
 				c.SetID(),
 				a.DB.Count(c.UUID()),
 				c.Name(),
+				strTypes(rc.Types),
 				rc.ManaCost,
-				rc.Keywords.String(),
+				strKeywords(rc.Keywords),
 			),
 			fmt.Sprintf(
 				p2,
@@ -945,6 +957,14 @@ ignored if -ia is passed. {fn} is replaced by the filename and {pid} with the pr
 	commands := map[string]func(arg []string) error{
 		"help": func([]string) error {
 			print("Usage:")
+			print("Search syntax:")
+			print("+mustHaveTag -mustNotHavetag  tags")
+			print("{+U}                          must cost at least 1 blue mana")
+			print("{+U,-B,-R}                    must cost at least 1 blue and no black or red mana")
+			print("{+G,-BURW}                    can only require green mana")
+			print("#flying                       must have keyword flying")
+			print("#creature                     must be a creature")
+			print("")
 			print("SIGINT (Ctrl-c)               cancel action in progress")
 			print("/help                         this")
 			print("/exit   | /quit               quit")
@@ -999,8 +1019,11 @@ ignored if -ia is passed. {fn} is replaced by the filename and {pid} with the pr
 			return _commandQ(nil)
 		},
 		"reset": func([]string) error {
-			state.Query = nil
-			state.Filtered = false
+			modifyState(true, func(s State) State {
+				s.Query = nil
+				s.Filtered = false
+				return s
+			})
 			return nil
 		},
 		"update": func([]string) error {
@@ -1455,6 +1478,8 @@ ignored if -ia is passed. {fn} is replaced by the filename and {pid} with the pr
 		qry := state.Query
 		qryTags := make([]string, 0, len(qry))
 		qryNotTags := make([]string, 0, len(qry))
+		qryMana := make([]string, 0, len(qry))
+		qryKeywords := make([]string, 0, len(qry))
 		_qryStr := make([]string, 0, len(qry))
 		for _, p := range qry {
 			switch {
@@ -1464,6 +1489,11 @@ ignored if -ia is passed. {fn} is replaced by the filename and {pid} with the pr
 				qryTags = append(qryTags, p[1:])
 			case p[0] == '-':
 				qryNotTags = append(qryNotTags, p[1:])
+			case p[0] == '{' && p[len(p)-1] == '}':
+				// case len(p) == 3 && p[0] == '{' && p[len(p)-1] == '}':
+				qryMana = append(qryMana, strings.ToUpper(p[1:len(p)-1]))
+			case p[0] == '#':
+				qryKeywords = append(qryKeywords, strings.ToLower(p[1:]))
 			default:
 				_qryStr = append(_qryStr, p)
 			}
@@ -1479,6 +1509,68 @@ ignored if -ia is passed. {fn} is replaced by the filename and {pid} with the pr
 				}
 				for _, t := range qryNotTags {
 					if c.HasTag(t) {
+						return false
+					}
+				}
+				return true
+			})
+		}
+
+		if len(qryMana) != 0 {
+			has := make([]byte, 0)
+			nhas := make([]byte, 0)
+			for _, qry := range qryMana {
+				p := strings.Split(qry, ",")
+				for _, color := range p {
+					if color == "" {
+						continue
+					}
+					f := color[0]
+					if f == '+' || f == '-' {
+						color = color[1:]
+					}
+					if f == '-' {
+						nhas = append(nhas, color...)
+						continue
+					}
+					has = append(has, color...)
+				}
+			}
+			filters = append(filters, func(c LocalCard) bool {
+				rc, _ := app.Cards.ByUUID(c.UUID())
+				d := []byte{'{', 0, '}'}
+				for _, m := range has {
+					d[1] = m
+					if !strings.Contains(rc.ManaCost, string(d)) {
+						return false
+					}
+				}
+				for _, m := range nhas {
+					d[1] = m
+					if strings.Contains(rc.ManaCost, string(d)) {
+						return false
+					}
+				}
+				return true
+			})
+		}
+
+		if len(qryKeywords) != 0 {
+			filters = append(filters, func(c LocalCard) bool {
+				rc, _ := app.Cards.ByUUID(c.UUID())
+				for _, m := range qryKeywords {
+					match := false
+					for _, kw := range rc.Keywords {
+						if strings.Contains(strings.ToLower(kw), m) {
+							match = true
+						}
+					}
+					for _, kw := range rc.Types {
+						if strings.Contains(strings.ToLower(kw), m) {
+							match = true
+						}
+					}
+					if !match {
 						return false
 					}
 				}
@@ -1554,7 +1646,10 @@ ignored if -ia is passed. {fn} is replaced by the filename and {pid} with the pr
 		switch state.Mode {
 		case ModeCollection:
 			if line != "" {
-				state.Query = append(state.Query, fields...)
+				modifyState(true, func(s State) State {
+					s.Query = append(s.Query, fields...)
+					return s
+				})
 			}
 			options, err := searchLocal()
 			if err != nil {
@@ -1587,7 +1682,10 @@ ignored if -ia is passed. {fn} is replaced by the filename and {pid} with the pr
 		case ModeSearch:
 			state.Filtered = true
 			if line != "" {
-				state.Query = append(state.Query, fields...)
+				modifyState(true, func(s State) State {
+					s.Query = append(s.Query, fields...)
+					return s
+				})
 			}
 			options := searchAll()
 			if len(options) == 0 {
