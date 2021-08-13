@@ -125,9 +125,6 @@ func WriteCardGOB(dir string, card Card) error {
 	if err != nil {
 		return err
 	}
-	if _, err := os.Stat(fp); err == nil {
-		return nil
-	}
 	_ = os.MkdirAll(dir, 0700)
 	tmp := tmpFile(fp)
 	f, err := os.Create(tmp)
