@@ -31,8 +31,6 @@ import (
 	_ "golang.org/x/image/webp"
 
 	"golang.org/x/image/draw"
-
-	"github.com/frizinak/gomtg/mtgjson"
 )
 
 func tmpFile(file string) string {
@@ -157,7 +155,7 @@ func _getImageCached(url string, dir string, decode bool) (image.Image, error) {
 	return nil, err
 }
 
-func addUUIDsToCollage(cols, rows int, canvas *image.NRGBA, cards []mtgjson.Card, imgs []image.Rectangle) error {
+func addUUIDsToCollage(cols, rows int, canvas *image.NRGBA, cards []Card, imgs []image.Rectangle) error {
 	fontLSrc := image.NewUniform(color.NRGBA{30, 0, 0, 180})
 	fontHSrc := image.NewUniform(color.NRGBA{200, 0, 0, 255})
 	fontBGSrc := image.NewUniform(color.NRGBA{204, 204, 204, 180})
@@ -316,7 +314,7 @@ func genCollage(cols, rows int, imgs []image.Image) (*image.NRGBA, []image.Recta
 
 type ImageGetter func(url string) (image.Image, error)
 
-func genImages(cards []mtgjson.Card, file string, getImage ImageGetter, progress func(n, total int)) error {
+func genImages(cards []Card, file string, getImage ImageGetter, progress func(n, total int)) error {
 	if len(cards) == 0 {
 		return errors.New("no cards to fetch images for")
 	}

@@ -1,8 +1,6 @@
 package mtgjson
 
 import (
-	"errors"
-	"fmt"
 	"sort"
 )
 
@@ -22,7 +20,7 @@ type Data struct {
 	IsFoilOnly       bool   `json:"isFoilOnly"`
 	IsOnlineOnly     bool   `json:"isOnlineOnly"`
 
-	Cards []FullCard `json:"cards"`
+	Cards []Card `json:"cards"`
 	// Booster map[string]interface{}
 	// Tokens []interface{}
 	// SealedProduct
@@ -30,15 +28,11 @@ type Data struct {
 }
 
 type Card struct {
-	UUID         UUID         `json:"uuid"`
-	Identifiers  ID           `json:"identifiers"`
-	Name         string       `json:"name"`
-	SetCode      SetID        `json:"setCode"`
-	Availability Availability `json:"availability"`
-}
-
-type FullCard struct {
-	Card
+	UUID                    UUID             `json:"uuid"`
+	Identifiers             ID               `json:"identifiers"`
+	Name                    string           `json:"name"`
+	SetCode                 SetID            `json:"setCode"`
+	Availability            Availability     `json:"availability"`
 	Artist                  string           `json:"artist"`
 	ASCII                   string           `json:"asciiName"`
 	BorderColor             BorderColor      `json:"borderColor"`
@@ -99,43 +93,6 @@ type FullCard struct {
 	ForeignData             []ForeignData    `json:"foreignData"`
 }
 
-func (c Card) ImageURLScryfall(back bool, size string) (string, error) {
-	if c.Identifiers.ScryfallId == "" {
-		return "", errors.New("no scryfall id")
-	}
-	face := "front"
-	if back {
-		face = "back"
-	}
-	if size == "" {
-		size = "normal"
-	}
-	return fmt.Sprintf(
-		"https://api.scryfall.com/cards/%s?format=image&face=%s&version=%s",
-		c.Identifiers.ScryfallId,
-		face,
-		size,
-	), nil
-}
-
-func (c Card) ImageURLGatherer() (string, error) {
-	if c.Identifiers.MultiverseId == "" {
-		return "", errors.New("no multiverse id")
-	}
-	return fmt.Sprintf(
-		"https://gatherer.wizards.com/Handlers/Image.ashx?type=card&multiverseid=%s",
-		c.Identifiers.MultiverseId,
-	), nil
-}
-
-func (c Card) ImageURL() (string, error) {
-	if img, err := c.ImageURLScryfall(false, "normal"); err == nil {
-		return img, err
-	}
-
-	return c.ImageURLGatherer()
-}
-
 type AllPrintings map[SetID]Data
 
 func (p AllPrintings) FilterOnlineOnly(o bool) AllPrintings {
@@ -160,29 +117,12 @@ func (p AllPrintings) SetIDs() []SetID {
 	return n
 }
 
-func (p AllPrintings) FullCards() []FullCard {
-	n := make([]FullCard, 0, len(p))
-	for i := range p {
-		n = append(n, p[i].Cards...)
-	}
-	return n
-}
-
 func (p AllPrintings) Cards() []Card {
 	n := make([]Card, 0, len(p))
 	for i := range p {
 		for j := range p[i].Cards {
-			n = append(n, p[i].Cards[j].Card)
+			n = append(n, p[i].Cards[j])
 		}
 	}
-	return n
-}
-
-func ByUUID(cards []Card) map[UUID]int {
-	n := make(map[UUID]int, len(cards))
-	for i, c := range cards {
-		n[c.UUID] = i
-	}
-
 	return n
 }

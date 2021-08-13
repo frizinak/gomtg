@@ -181,7 +181,7 @@ func colorUniqUUID(uuids []string, colors Colors) []string {
 
 type getPricing func(uuid mtgjson.UUID, foil, fetch bool) (float64, bool)
 
-func cardsString(db *DB, cards []mtgjson.Card, max int, getPricing getPricing, colors Colors, uniq bool) []string {
+func cardsString(db *DB, cards []Card, max int, getPricing getPricing, colors Colors, uniq bool) []string {
 	l := make([]string, 0, len(cards))
 	uuids := make([]string, len(cards))
 	for i, c := range cards {
@@ -331,7 +331,7 @@ func localCardsString(db *DB, cards []LocalCard, max int, getPricing getPricing,
 	return l
 }
 
-func cardListID(c []mtgjson.Card) string {
+func cardListID(c []Card) string {
 	ids := make([]string, len(c))
 	for i, card := range c {
 		ids[i] = string(card.UUID)
@@ -348,7 +348,7 @@ func main() {
 	}
 	dir := filepath.Join(cacheDir, "gomtg")
 	exportDir := filepath.Join(dir, "exports")
-	dest := filepath.Join(dir, "v5-all-printings.gob")
+	dest := filepath.Join(dir, "v5-all-printings")
 	imagePath := filepath.Join(dir, "options.jpg")
 	imageDir := filepath.Join(dir, "images")
 	var skipIntro bool
@@ -411,6 +411,7 @@ ignored if -ia is passed. {fn} is replaced by the filename and {pid} with the pr
 		os.Exit(0)
 	}
 
+	_ = os.MkdirAll(dest, 0700)
 	_ = os.MkdirAll(dir, 0700)
 	_ = os.MkdirAll(exportDir, 0700)
 	_ = os.MkdirAll(filepath.Dir(dbFile), 0700)
@@ -562,43 +563,18 @@ ignored if -ia is passed. {fn} is replaced by the filename and {pid} with the pr
 		return nil
 	}))
 
-	var cards []mtgjson.Card
-	var byUUID map[mtgjson.UUID]int
-	var sets map[mtgjson.SetID]string
-	var fullDataLoad bool
-	var fullData map[mtgjson.UUID]mtgjson.FullCard
+	var cards *All
 	var fuzz *fuzzy.Index
 	reloadData := func(refresh bool) error {
-		data, err := loadData(dest, refresh)
+		var err error
+		cards, err = loadData(dest, refresh)
 		if err != nil {
 			return err
-		}
-
-		err = progress("Filter paper cards", func() error {
-			data = data.FilterOnlineOnly(false)
-			cards = data.Cards()
-			byUUID = mtgjson.ByUUID(cards)
-			return nil
-		})
-		if err != nil {
-			return err
-		}
-
-		sets = make(map[mtgjson.SetID]string)
-		for i := range data {
-			sets[i] = data[i].Name
-		}
-
-		if fullDataLoad {
-			fullData = make(map[mtgjson.UUID]mtgjson.FullCard)
-			for _, c := range data.FullCards() {
-				fullData[c.UUID] = c
-			}
 		}
 
 		err = progress("Create full index", func() error {
 			list := make([]string, 0)
-			for _, card := range cards {
+			for _, card := range cards.Cards {
 				list = append(list, card.Name)
 			}
 			fuzz = fuzzy.NewIndex(2, list)
@@ -611,18 +587,6 @@ ignored if -ia is passed. {fn} is replaced by the filename and {pid} with the pr
 	}
 
 	exit(reloadData(false))
-
-	getFullCard := func(uuid mtgjson.UUID) (mtgjson.FullCard, error) {
-		var fc mtgjson.FullCard
-		fullDataLoad = true
-		if len(fullData) == 0 {
-			reloadData(false)
-		}
-		if fc, ok := fullData[uuid]; ok {
-			return fc, nil
-		}
-		return fc, fmt.Errorf("no card with uuid %s", uuid)
-	}
 
 	state := State{Mode: ModeCollection, Sort: SortIndex}
 	output := make([]string, 1, 30)
@@ -658,24 +622,9 @@ ignored if -ia is passed. {fn} is replaced by the filename and {pid} with the pr
 		print(fmt.Sprintf("%s%s\033[0m", clr, err.Error()))
 	}
 
-	cardByUUID := func(uuid mtgjson.UUID) (card mtgjson.Card, ok bool) {
-		var ix int
-		ix, ok = byUUID[uuid]
-		if !ok {
-			return
-		}
-		if ix < 0 || ix >= len(cards) {
-			ok = false
-			return
-		}
-
-		card = cards[ix]
-		return
-	}
-
 	getFullPricing := func(uuid mtgjson.UUID, fetch, forceFetch, wait bool) Pricing {
 		p := Pricing{T: time.Now()}
-		c, ok := cardByUUID(uuid)
+		c, ok := cards.ByUUID(uuid)
 		if !ok || c.Identifiers.ScryfallId == "" {
 			return p
 		}
@@ -782,8 +731,8 @@ ignored if -ia is passed. {fn} is replaced by the filename and {pid} with the pr
 	lastImageListID := ""
 	printSets := func(filter string) {
 		filter = strings.ToLower(filter)
-		list := make([]string, 0, len(sets))
-		for k, v := range sets {
+		list := make([]string, 0, len(cards.Sets))
+		for k, v := range cards.Sets {
 			v := fmt.Sprintf("%s: %s", k, v)
 			if filter != "" && !strings.Contains(strings.ToLower(v), filter) {
 				continue
@@ -830,8 +779,8 @@ ignored if -ia is passed. {fn} is replaced by the filename and {pid} with the pr
 		printSkipped(len(state.Options), max)
 	}
 
-	lastAdded := make([]mtgjson.Card, 0)
-	addToCollection := func(cards []mtgjson.Card) {
+	lastAdded := make([]Card, 0)
+	addToCollection := func(cards []Card) {
 		if len(cards) == 0 {
 			return
 		}
@@ -880,9 +829,9 @@ ignored if -ia is passed. {fn} is replaced by the filename and {pid} with the pr
 		}
 	}
 
-	partialUUID := func(str string) (mtgjson.Card, error) {
-		list := make([]mtgjson.Card, 0, 1)
-		add := func(c mtgjson.Card) error {
+	partialUUID := func(str string) (Card, error) {
+		list := make([]Card, 0, 1)
+		add := func(c Card) error {
 			if !strings.Contains(
 				strings.ToLower(string(c.UUID)),
 				strings.ToLower(str),
@@ -912,7 +861,7 @@ ignored if -ia is passed. {fn} is replaced by the filename and {pid} with the pr
 			return nil
 		}
 
-		var match mtgjson.Card
+		var match Card
 		for _, c := range state.Options {
 			if err := add(c); err != nil {
 				return match, err
@@ -920,7 +869,7 @@ ignored if -ia is passed. {fn} is replaced by the filename and {pid} with the pr
 		}
 
 		if len(list) == 0 {
-			for _, c := range cards {
+			for _, c := range cards.Cards {
 				if err := add(c); err != nil {
 					return match, err
 				}
@@ -1055,7 +1004,7 @@ ignored if -ia is passed. {fn} is replaced by the filename and {pid} with the pr
 			}
 
 			for _, c := range deletes {
-				db.Delete(c.Card)
+				db.Delete(c.DBCard)
 			}
 
 			for _, c := range db.Cards() {
@@ -1120,7 +1069,7 @@ ignored if -ia is passed. {fn} is replaced by the filename and {pid} with the pr
 				return errors.New("/img requires exactly 1 argument")
 			}
 
-			list := make([]mtgjson.Card, 1)
+			list := make([]Card, 1)
 			arg := a[0]
 			card, err := partialUUID(arg)
 			if err != nil {
@@ -1149,13 +1098,13 @@ ignored if -ia is passed. {fn} is replaced by the filename and {pid} with the pr
 			if err != nil {
 				return err
 			}
-			card, err := getFullCard(c.UUID)
+			card, err := c.Full()
 			if err != nil {
 				return err
 			}
 
 			data := make([]string, 6, 10)
-			data[0] = fmt.Sprintf("%s: %s", card.SetCode, sets[card.SetCode])
+			data[0] = fmt.Sprintf("%s: %s", card.SetCode, cards.Sets[card.SetCode])
 			var pt string
 			if card.Power != "" && card.Toughness != "" {
 				pt = fmt.Sprintf("%2s/%-2s", card.Power, card.Toughness)
@@ -1254,7 +1203,7 @@ ignored if -ia is passed. {fn} is replaced by the filename and {pid} with the pr
 				return nil
 			}
 			fs := mtgjson.SetID(strings.ToUpper(arg))
-			if _, ok := sets[fs]; !ok {
+			if _, ok := cards.Sets[fs]; !ok {
 				printSets("")
 				return fmt.Errorf("invalid set id: '%s'", arg)
 			}
@@ -1356,7 +1305,7 @@ ignored if -ia is passed. {fn} is replaced by the filename and {pid} with the pr
 						return fmt.Errorf("'%s' is no a valid tag specifier", arg)
 					}
 					for _, c := range state.Local {
-						t := NewTagging(c.Card)
+						t := NewTagging(c.DBCard)
 						t.Add(arg[0] == '+', arg[1:])
 						tags = append(tags, t)
 					}
@@ -1443,18 +1392,18 @@ ignored if -ia is passed. {fn} is replaced by the filename and {pid} with the pr
 		return isCommand, nil
 	}
 
-	searchAll := func() []mtgjson.Card {
+	searchAll := func() []Card {
 		qry := strings.Join(state.Query, " ")
 		res := fuzz.Search(qry, func(score, min, max int) bool {
 			return score > 0 && score == max
 		})
 
-		list := make([]mtgjson.Card, 0, len(res))
+		list := make([]Card, 0, len(res))
 		for _, ix := range res {
-			if state.FilterSet != "" && cards[ix].SetCode != state.FilterSet {
+			if state.FilterSet != "" && cards.Cards[ix].SetCode != state.FilterSet {
 				continue
 			}
-			list = append(list, cards[ix])
+			list = append(list, cards.Cards[ix])
 		}
 
 		return list
@@ -1591,9 +1540,9 @@ ignored if -ia is passed. {fn} is replaced by the filename and {pid} with the pr
 			}
 
 			state.Filtered = line != ""
-			roptions := make([]mtgjson.Card, 0, len(options))
+			roptions := make([]Card, 0, len(options))
 			for _, c := range options {
-				rc, ok := cardByUUID(c.UUID())
+				rc, ok := cards.ByUUID(c.UUID())
 				if ok {
 					roptions = append(roptions, rc)
 				}
@@ -1670,7 +1619,7 @@ ignored if -ia is passed. {fn} is replaced by the filename and {pid} with the pr
 
 		case ModeSelect:
 			state.Filtered = true
-			sel := make([]mtgjson.Card, 0, 1)
+			sel := make([]Card, 0, 1)
 			for _, c := range state.Options {
 				if strings.Contains(strings.ToLower(string(c.UUID)), strings.ToLower(line)) {
 					sel = append(sel, c)

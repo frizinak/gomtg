@@ -14,7 +14,7 @@ type State struct {
 	Mode       Mode
 	PrevMode   Mode
 	FilterSet  mtgjson.SetID
-	Options    []mtgjson.Card
+	Options    []Card
 	Local      []LocalCard
 	Sort       Sort
 	Tags       []string
@@ -110,8 +110,8 @@ func (s Sort) Valid() bool {
 
 type Selection []Select
 
-func (s Selection) Cards() []mtgjson.Card {
-	n := make([]mtgjson.Card, len(s))
+func (s Selection) Cards() []Card {
+	n := make([]Card, len(s))
 	for i, c := range s {
 		n[i] = c.Card
 	}
@@ -119,15 +119,15 @@ func (s Selection) Cards() []mtgjson.Card {
 }
 
 type Select struct {
-	mtgjson.Card
+	Card
 	Tags newTags
 }
 
-func NewSelect(c mtgjson.Card) Select {
+func NewSelect(c Card) Select {
 	return Select{c, make(newTags)}
 }
 
-func NewSelection(c []mtgjson.Card) []Select {
+func NewSelection(c []Card) []Select {
 	n := make([]Select, len(c))
 	for i, card := range c {
 		n[i] = NewSelect(card)
@@ -171,7 +171,7 @@ func (s State) Equal(o State) bool {
 	}
 
 	for i := range s.Delete {
-		if s.Delete[i].Card != o.Delete[i].Card {
+		if s.Delete[i].DBCard != o.Delete[i].DBCard {
 			return false
 		}
 	}
@@ -181,7 +181,7 @@ func (s State) Equal(o State) bool {
 
 func (s State) String(db *DB, colors Colors, getPricing getPricing) []string {
 	data := []string{s.StringShort(colors, getPricing)}
-	selCards := make([]mtgjson.Card, len(s.Selection))
+	selCards := make([]Card, len(s.Selection))
 	good, bad := colors.Get("good"), colors.Get("bad")
 	for i, c := range s.Selection {
 		selCards[i] = c.Card
@@ -309,12 +309,12 @@ func (t newTags) Del(tags ...string) {
 }
 
 type Tagging struct {
-	*Card
+	*DBCard
 	tagsAdd newTags
 	tagsDel newTags
 }
 
-func NewTagging(c *Card) Tagging {
+func NewTagging(c *DBCard) Tagging {
 	return Tagging{
 		c,
 		make(newTags),
@@ -333,8 +333,8 @@ func (t Tagging) Add(add bool, tag string) {
 }
 
 func (t Tagging) Commit() {
-	t.Card.Untag(t.tagsDel.Slice())
-	t.Card.Tag(t.tagsAdd.Slice())
+	t.DBCard.Untag(t.tagsDel.Slice())
+	t.DBCard.Tag(t.tagsAdd.Slice())
 }
 
 func (t Tagging) NewTags() (added []string, removed []string) {
@@ -367,13 +367,13 @@ func (t Tagging) NewTagsString() string {
 }
 
 type LocalCard struct {
-	*Card
+	*DBCard
 	Index int
 }
 
-func NewLocalCard(c *Card, ix int) LocalCard {
+func NewLocalCard(c *DBCard, ix int) LocalCard {
 	return LocalCard{
-		Card:  c,
-		Index: ix,
+		DBCard: c,
+		Index:  ix,
 	}
 }

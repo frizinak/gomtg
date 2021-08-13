@@ -48,7 +48,7 @@ func (t Tags) Contains(tag string) bool {
 	return ok
 }
 
-type Card struct {
+type DBCard struct {
 	db      *DB
 	name    string
 	uuid    mtgjson.UUID
@@ -74,34 +74,34 @@ type jsonCard struct {
 	Pricing Pricing       `json:"price"`
 }
 
-func (c *Card) Name() string         { return c.name }
-func (c *Card) UUID() mtgjson.UUID   { return c.uuid }
-func (c *Card) SetID() mtgjson.SetID { return c.setID }
-func (c *Card) Tags() []string       { return c.tags.Slice() }
-func (c *Card) HasTag(t string) bool { return c.tags.Contains(t) }
-func (c *Card) Foil() bool           { return c.HasTag("foil") }
+func (c *DBCard) Name() string         { return c.name }
+func (c *DBCard) UUID() mtgjson.UUID   { return c.uuid }
+func (c *DBCard) SetID() mtgjson.SetID { return c.setID }
+func (c *DBCard) Tags() []string       { return c.tags.Slice() }
+func (c *DBCard) HasTag(t string) bool { return c.tags.Contains(t) }
+func (c *DBCard) Foil() bool           { return c.HasTag("foil") }
 
-func (c *Card) Tag(tags []string) {
+func (c *DBCard) Tag(tags []string) {
 	changed := c.tags.Add(tags)
 	c.db.save = c.db.save || changed
 }
 
-func (c *Card) Untag(tags []string) {
+func (c *DBCard) Untag(tags []string) {
 	changed := c.tags.Del(tags)
 	c.db.save = c.db.save || changed
 }
 
-func (c *Card) SetPricing(p Pricing) {
+func (c *DBCard) SetPricing(p Pricing) {
 	if c.pricing != p {
 		c.pricing = p
 		c.db.save = true
 	}
 }
 
-func (c *Card) Pricing() Pricing { return c.pricing }
+func (c *DBCard) Pricing() Pricing { return c.pricing }
 
-func FromCard(db *DB, c mtgjson.Card) *Card {
-	return &Card{
+func FromCard(db *DB, c Card) *DBCard {
+	return &DBCard{
 		db:    db,
 		uuid:  c.UUID,
 		setID: c.SetCode,
@@ -111,12 +111,12 @@ func FromCard(db *DB, c mtgjson.Card) *Card {
 }
 
 type DB struct {
-	data   []*Card
+	data   []*DBCard
 	byUUID map[mtgjson.UUID][]int
 	save   bool
 }
 
-func (db *DB) Add(c *Card) {
+func (db *DB) Add(c *DBCard) {
 	db.data = append(db.data, c)
 	if _, ok := db.byUUID[c.uuid]; !ok {
 		db.byUUID[c.uuid] = make([]int, 0, 1)
@@ -125,11 +125,11 @@ func (db *DB) Add(c *Card) {
 	db.save = true
 }
 
-func (db *DB) AddMTGJSON(c mtgjson.Card) {
+func (db *DB) AddMTGJSON(c Card) {
 	db.Add(FromCard(db, c))
 }
 
-func (db *DB) Delete(c *Card) {
+func (db *DB) Delete(c *DBCard) {
 	n := false
 	for i := 0; i < len(db.data); i++ {
 		dc := db.data[i]
@@ -146,8 +146,8 @@ func (db *DB) Delete(c *Card) {
 	}
 }
 
-func (db *DB) Cards() []*Card {
-	d := make([]*Card, len(db.data))
+func (db *DB) Cards() []*DBCard {
+	d := make([]*DBCard, len(db.data))
 	copy(d, db.data)
 	return d
 }
@@ -156,7 +156,7 @@ func (db *DB) Count(uuid mtgjson.UUID) int {
 	return len(db.byUUID[uuid])
 }
 
-func (db *DB) CardAt(ix int) (*Card, bool) {
+func (db *DB) CardAt(ix int) (*DBCard, bool) {
 	if ix < 0 || ix >= len(db.data) {
 		return nil, false
 	}
@@ -215,7 +215,7 @@ func (db *DB) rebuildUUIDs() {
 
 func LoadDB(file string) (*DB, error) {
 	byUUID := make(map[mtgjson.UUID][]int)
-	db := &DB{data: make([]*Card, 0, 1024), byUUID: byUUID}
+	db := &DB{data: make([]*DBCard, 0, 1024), byUUID: byUUID}
 	f, err := os.Open(file)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -233,7 +233,7 @@ func LoadDB(file string) (*DB, error) {
 		}
 		tags := make(Tags)
 		tags.Add(jc.Tags)
-		c := &Card{
+		c := &DBCard{
 			db,
 			jc.Name,
 			jc.UUID,
