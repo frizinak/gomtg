@@ -33,7 +33,7 @@ func (s State) Changes() bool {
 		len(s.Delete) != 0
 }
 
-func (s State) SortLocal(db *DB, getPricing getPricing) {
+func (s State) SortLocal(app *App) {
 	sorter := NewSortable(func(i, j int) {
 		s.Local[i], s.Local[j] = s.Local[j], s.Local[i]
 	})
@@ -45,11 +45,11 @@ func (s State) SortLocal(db *DB, getPricing getPricing) {
 		}
 	case SortCount:
 		for _, c := range s.Local {
-			ints = append(ints, db.Count(c.UUID()))
+			ints = append(ints, app.DB.Count(c.UUID()))
 		}
 	case SortPrice:
 		for _, c := range s.Local {
-			p, _ := getPricing(c.UUID(), c.Foil(), false)
+			p, _ := app.GetPricing(c.UUID(), c.Foil(), false)
 			ints = append(ints, int(p*100))
 		}
 	default:
@@ -62,7 +62,7 @@ func (s State) SortLocal(db *DB, getPricing getPricing) {
 	sorter.Sort()
 }
 
-func (s State) SortOptions(db *DB, getPricing getPricing) {
+func (s State) SortOptions(app *App) {
 	sorter := NewSortable(func(i, j int) {
 		s.Options[i], s.Options[j] = s.Options[j], s.Options[i]
 	})
@@ -70,12 +70,12 @@ func (s State) SortOptions(db *DB, getPricing getPricing) {
 	switch s.Sort {
 	case SortPrice:
 		for _, c := range s.Options {
-			p, _ := getPricing(c.UUID, false, false)
+			p, _ := app.GetPricing(c.UUID, false, false)
 			ints = append(ints, int(p*100))
 		}
 	case SortCount:
 		for _, c := range s.Options {
-			ints = append(ints, db.Count(c.UUID))
+			ints = append(ints, app.DB.Count(c.UUID))
 		}
 	default:
 		for _, c := range s.Options {
@@ -179,14 +179,14 @@ func (s State) Equal(o State) bool {
 	return true
 }
 
-func (s State) String(db *DB, colors Colors, getPricing getPricing) []string {
-	data := []string{s.StringShort(colors, getPricing)}
+func (s State) String(app *App) []string {
+	data := []string{s.StringShort(app)}
 	selCards := make([]Card, len(s.Selection))
-	good, bad := colors.Get("good"), colors.Get("bad")
+	good, bad := app.Colors.Get("good"), app.Colors.Get("bad")
 	for i, c := range s.Selection {
 		selCards[i] = c.Card
 	}
-	cardsStrs := cardsString(db, selCards, 0, getPricing, colors, false)
+	cardsStrs := app.CardsString(selCards, 0, false)
 	for i := range cardsStrs {
 		cardsStrs[i] = fmt.Sprintf(" \u2514 %s ADD \033[0m %s", good, cardsStrs[i])
 	}
@@ -216,7 +216,7 @@ func (s State) String(db *DB, colors Colors, getPricing getPricing) []string {
 		)
 	}
 
-	delStrs := localCardsString(db, s.Delete, 0, getPricing, colors, false)
+	delStrs := app.LocalCardsString(s.Delete, 0, false)
 	for i := range delStrs {
 		delStrs[i] = fmt.Sprintf(" \u2514 %s DEL \033[0m %s", bad, delStrs[i])
 	}
@@ -225,9 +225,9 @@ func (s State) String(db *DB, colors Colors, getPricing getPricing) []string {
 	return data
 }
 
-func (s State) StringShort(colors Colors, getPricing getPricing) string {
-	clr := colors.Get("status")
-	modeClr := colors.Get("good")
+func (s State) StringShort(app *App) string {
+	clr := app.Colors.Get("status")
+	modeClr := app.Colors.Get("good")
 	d := make([]string, 3, 5)
 	d[0] = fmt.Sprintf("q:%s", strings.Join(s.Query, " "))
 	d[1] = fmt.Sprintf("set:%s", s.FilterSet)
@@ -235,7 +235,7 @@ func (s State) StringShort(colors Colors, getPricing getPricing) string {
 	if len(s.Local) != 0 {
 		outdated := 0
 		for _, c := range s.Local {
-			_, ok := getPricing(c.UUID(), c.Foil(), false)
+			_, ok := app.GetPricing(c.UUID(), c.Foil(), false)
 			if !ok {
 				outdated++
 			}

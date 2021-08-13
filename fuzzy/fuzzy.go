@@ -6,9 +6,8 @@ import (
 
 type Index struct {
 	fuzzyLength int
-	// items       []string
-	n    int
-	data map[string][]int
+	n           int
+	data        map[string][]int
 }
 
 func NewIndex(fuzzyLength int, items []string) *Index {

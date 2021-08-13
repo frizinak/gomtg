@@ -156,14 +156,133 @@ func uniqUUIDPart(list []string) [][3]string {
 	return d
 }
 
-func colorUniqUUID(uuids []string, colors Colors) []string {
+type App struct {
+	DB     *DB
+	Cards  *All
+	Colors Colors
+	Scry   *scryfall.API
+
+	pricing struct {
+		currency string
+		data     map[mtgjson.UUID]Pricing
+		busy     map[mtgjson.UUID]struct{}
+		mutex    sync.RWMutex
+	}
+}
+
+func NewApp(currency string) *App {
+	a := &App{}
+	a.pricing.currency = currency
+	a.pricing.data = make(map[mtgjson.UUID]Pricing)
+	a.pricing.busy = make(map[mtgjson.UUID]struct{})
+	return a
+}
+
+func (a *App) PricingValue(p Pricing, foil bool) float64 {
+	if a.pricing.currency != "eur" {
+		if foil {
+			return p.USDFoil
+		}
+		return p.USD
+	}
+
+	if foil {
+		return p.EURFoil
+	}
+	return p.EUR
+}
+
+func (a *App) GetFullPricing(uuid mtgjson.UUID, fetch, forceFetch, wait bool) Pricing {
+	p := Pricing{T: time.Now()}
+	c, ok := a.Cards.ByUUID(uuid)
+	if !ok || c.Identifiers.ScryfallId == "" {
+		return p
+	}
+	id := c.Identifiers.ScryfallId
+	check := func() (Pricing, bool) {
+		v, ok := a.pricing.data[uuid]
+		if ok {
+			pv := a.PricingValue(v, false)
+			if pv != 0 && time.Since(v.T) < scryfall.PricingOutdated {
+				return v, true
+			}
+			if pv == 0 && time.Since(v.T) < time.Minute*5 {
+				return v, true
+			}
+		}
+		return v, false
+	}
+
+	if !forceFetch {
+		a.pricing.mutex.RLock()
+		v, ok := check()
+		a.pricing.mutex.RUnlock()
+		if ok {
+			return v
+		}
+
+		if !fetch {
+			return v
+		}
+	}
+
+	w := make(chan struct{}, 1)
+	go func() {
+		defer func() { w <- struct{}{} }()
+
+		fetch := func() bool {
+			a.pricing.mutex.Lock()
+			defer a.pricing.mutex.Unlock()
+			if _, ok := a.pricing.busy[uuid]; ok {
+				return false
+			}
+			if _, ok := check(); ok {
+				return false
+			}
+			a.pricing.busy[uuid] = struct{}{}
+			return true
+		}()
+
+		if !fetch {
+			return
+		}
+
+		res, err := a.Scry.CardDeferred(id)
+		a.pricing.mutex.Lock()
+		defer a.pricing.mutex.Unlock()
+		delete(a.pricing.busy, uuid)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			a.pricing.data[uuid] = p
+			return
+		}
+
+		p.EUR = res.EUR()
+		p.USD = res.USD()
+		p.EURFoil = res.EURFoil()
+		p.USDFoil = res.USDFoil()
+
+		a.pricing.data[uuid] = p
+	}()
+	if wait {
+		<-w
+	}
+
+	return p
+}
+
+func (a *App) GetPricing(uuid mtgjson.UUID, foil, fetch bool) (float64, bool) {
+	p := a.GetFullPricing(uuid, fetch, false, false)
+	v := a.PricingValue(p, foil)
+	return v, v != 0 && time.Since(p.T) <= scryfall.PricingOutdated
+}
+
+func (a *App) colorUniqUUID(uuids []string) []string {
 	list := uniqUUIDPart(uuids)
 	ret := make([]string, len(uuids))
 	clrH, clrL := "", ""
-	if colors != nil {
-		clrH = colors.Get("high")
-		clrL = colors.Get("low")
-	}
+	clrH = a.Colors.Get("high")
+	clrL = a.Colors.Get("low")
 	for i := range list {
 		ret[i] = fmt.Sprintf(
 			"%s%s\033[0m%s %s \033[0m%s%s\033[0m",
@@ -179,9 +298,7 @@ func colorUniqUUID(uuids []string, colors Colors) []string {
 	return ret
 }
 
-type getPricing func(uuid mtgjson.UUID, foil, fetch bool) (float64, bool)
-
-func cardsString(db *DB, cards []Card, max int, getPricing getPricing, colors Colors, uniq bool) []string {
+func (a *App) CardsString(cards []Card, max int, uniq bool) []string {
 	l := make([]string, 0, len(cards))
 	uuids := make([]string, len(cards))
 	for i, c := range cards {
@@ -189,7 +306,7 @@ func cardsString(db *DB, cards []Card, max int, getPricing getPricing, colors Co
 	}
 
 	if uniq {
-		uuids = colorUniqUUID(uuids, colors)
+		uuids = a.colorUniqUUID(uuids)
 	}
 
 	longestTitle := 0
@@ -200,7 +317,7 @@ func cardsString(db *DB, cards []Card, max int, getPricing getPricing, colors Co
 		}
 	}
 	titlePad := strconv.Itoa(longestTitle)
-	bad := colors.Get("bad")
+	bad := a.Colors.Get("bad")
 
 	if max > 0 && len(cards) > max {
 		s := len(cards) - max
@@ -209,7 +326,7 @@ func cardsString(db *DB, cards []Card, max int, getPricing getPricing, colors Co
 	}
 
 	for i, c := range cards {
-		pricing, ok := getPricing(cards[i].UUID, false, false)
+		pricing, ok := a.GetPricing(cards[i].UUID, false, false)
 		pricingClr := ""
 		if !ok {
 			pricingClr = bad
@@ -220,7 +337,7 @@ func cardsString(db *DB, cards []Card, max int, getPricing getPricing, colors Co
 				"%s \u2502 %-5s \u2502 %-4d \u2502 %-"+titlePad+"s \u2502%s %-.2f \033[0m",
 				uuids[i],
 				c.SetCode,
-				db.Count(c.UUID),
+				a.DB.Count(c.UUID),
 				c.Name,
 				pricingClr,
 				pricing,
@@ -233,36 +350,27 @@ func cardsString(db *DB, cards []Card, max int, getPricing getPricing, colors Co
 
 var csiRE = regexp.MustCompile(`\033\[.*?[a-z]`)
 
-func localCardsString(db *DB, cards []LocalCard, max int, getPricing getPricing, colors Colors, uniq bool) []string {
+func (a *App) LocalCardsString(cards []LocalCard, max int, uniq bool) []string {
 	if len(cards) == 0 {
 		return nil
 	}
+
 	l := make([]string, 0, len(cards)+1)
 	uuids := make([]string, len(cards))
+
 	for i, c := range cards {
 		uuids[i] = string(c.UUID())
 	}
 
 	if uniq {
-		uuids = colorUniqUUID(uuids, colors)
+		uuids = a.colorUniqUUID(uuids)
 	}
-
-	longestTitle := 0
-	for _, c := range cards {
-		l := len(c.Name())
-		if l > longestTitle {
-			longestTitle = l
-		}
-	}
-	titlePad := strconv.Itoa(longestTitle)
-	bad := colors.Get("bad")
 
 	priceSum := 0.0
 	priceFails := len(cards)
 	prices := make([][]byte, len(cards))
-	//longestPrice := 0
 	for i := range prices {
-		pricing, ok := getPricing(cards[i].UUID(), cards[i].Foil(), false)
+		pricing, ok := a.GetPricing(cards[i].UUID(), cards[i].Foil(), false)
 		p := fmt.Sprintf("%.2f", pricing)
 		if pricing == 0 {
 			ok = false
@@ -280,18 +388,51 @@ func localCardsString(db *DB, cards []LocalCard, max int, getPricing getPricing,
 	priceSumStr := fmt.Sprintf("%.2f", priceSum)
 	pricePad := strconv.Itoa(len(priceSumStr))
 
-	p1 := "%6d \u2502 %s \u2502 %-5s \u2502 %-4d \u2502 %-" +
-		titlePad + "s "
-	p2 := "\u2502%s %" + pricePad + "s \033[0m\u2502 %s"
-
-	p1Len := 0
 	if max > 0 && len(cards) > max {
 		s := len(cards) - max
 		uuids = uuids[s:]
 		prices = prices[s:]
 		cards = cards[s:]
 	}
+
+	longestTitle := 0
+	longestMana := 0
+	longestKeywords := 0
+	rcards := make([]Card, len(cards))
 	for i, c := range cards {
+		rc, ok := a.Cards.ByUUID(c.UUID())
+		if !ok {
+			panic("local mtgjson database seems corrupt")
+		}
+		rcards[i] = rc
+	}
+	for _, c := range rcards {
+		l := len(c.Name)
+		if l > longestTitle {
+			longestTitle = l
+		}
+		l = len(c.ManaCost)
+		if l > longestMana {
+			longestMana = l
+		}
+		l = len(c.Keywords.String())
+		if l > longestKeywords {
+			longestKeywords = l
+		}
+	}
+	titlePad := strconv.Itoa(longestTitle)
+	manaPad := strconv.Itoa(longestMana)
+	kwPad := strconv.Itoa(longestKeywords)
+	bad := a.Colors.Get("bad")
+
+	p1 := "%6d \u2502 %s \u2502 %-5s \u2502 %-4d \u2502 %-" +
+		titlePad + "s \u2502 %-" + manaPad + "s \u2502 %-" + kwPad + "s "
+	p2 := "\u2502%s %" + pricePad + "s \033[0m\u2502 %s"
+
+	p1Len := 0
+
+	for i, c := range cards {
+		rc := rcards[i]
 		tags := c.Tags()
 		tagstr := strings.Join(tags, ",")
 		pricingClr := ""
@@ -304,8 +445,10 @@ func localCardsString(db *DB, cards []LocalCard, max int, getPricing getPricing,
 				c.Index+1,
 				uuids[i],
 				c.SetID(),
-				db.Count(c.UUID()),
+				a.DB.Count(c.UUID()),
 				c.Name(),
+				rc.ManaCost,
+				rc.Keywords.String(),
 			),
 			fmt.Sprintf(
 				p2,
@@ -321,7 +464,7 @@ func localCardsString(db *DB, cards []LocalCard, max int, getPricing getPricing,
 		l = append(l, strings.Join(items, ""))
 	}
 
-	pricingClr := colors.Get("good")
+	pricingClr := a.Colors.Get("good")
 	if priceFails != 0 {
 		pricingClr = bad
 	}
@@ -437,25 +580,6 @@ ignored if -ia is passed. {fn} is replaced by the filename and {pid} with the pr
 		os.Exit(1)
 	}
 
-	scry := scryfall.New(nil, time.Second*10)
-	pricing := make(map[mtgjson.UUID]Pricing)
-	pricingBusy := make(map[mtgjson.UUID]struct{})
-	var pricingMutex sync.RWMutex
-	pricingValue := func(p Pricing, foil bool) float64 {
-		if foil {
-			return p.EURFoil
-		}
-		return p.EUR
-	}
-	if currency != "eur" {
-		pricingValue = func(p Pricing, foil bool) float64 {
-			if foil {
-				return p.USDFoil
-			}
-			return p.USD
-		}
-	}
-
 	term := console.Current()
 
 	sigCh := make(chan os.Signal, 10)
@@ -533,12 +657,15 @@ ignored if -ia is passed. {fn} is replaced by the filename and {pid} with the pr
 		return nil
 	}))
 
-	var db *DB
+	app := NewApp(currency)
+	app.Scry = scryfall.New(nil, time.Second*10)
+	app.Colors = colors
+
 	var localFuzz *fuzzy.Index
 
 	rebuildLocalFuzz := func() {
 		list := make([]string, 0)
-		for _, card := range db.Cards() {
+		for _, card := range app.DB.Cards() {
 			list = append(list, card.Name())
 		}
 		localFuzz = fuzzy.NewIndex(2, list)
@@ -546,15 +673,15 @@ ignored if -ia is passed. {fn} is replaced by the filename and {pid} with the pr
 
 	exit(progress("Load database", func() error {
 		var err error
-		db, err = LoadDB(dbFile)
-		pricingMutex.Lock()
-		for _, card := range db.Cards() {
+		app.DB, err = LoadDB(dbFile)
+		app.pricing.mutex.Lock()
+		for _, card := range app.DB.Cards() {
 			p := card.Pricing()
 			if p.T != (time.Time{}) {
-				pricing[card.UUID()] = p
+				app.pricing.data[card.UUID()] = p
 			}
 		}
-		pricingMutex.Unlock()
+		app.pricing.mutex.Unlock()
 		return err
 	}))
 
@@ -563,18 +690,17 @@ ignored if -ia is passed. {fn} is replaced by the filename and {pid} with the pr
 		return nil
 	}))
 
-	var cards *All
 	var fuzz *fuzzy.Index
 	reloadData := func(refresh bool) error {
 		var err error
-		cards, err = loadData(dest, refresh)
+		app.Cards, err = loadData(dest, refresh)
 		if err != nil {
 			return err
 		}
 
 		err = progress("Create full index", func() error {
 			list := make([]string, 0)
-			for _, card := range cards.Cards {
+			for _, card := range app.Cards.Cards {
 				list = append(list, card.Name)
 			}
 			fuzz = fuzzy.NewIndex(2, list)
@@ -610,7 +736,7 @@ ignored if -ia is passed. {fn} is replaced by the filename and {pid} with the pr
 		print(string(n))
 	}
 	printAlert := func(msg string) {
-		clr := colors.Get("good")
+		clr := app.Colors.Get("good")
 		print(fmt.Sprintf("%s %s \033[0m", clr, msg))
 	}
 	printErr := func(err error) {
@@ -618,98 +744,13 @@ ignored if -ia is passed. {fn} is replaced by the filename and {pid} with the pr
 			return
 		}
 
-		clr := colors.Get("bad")
+		clr := app.Colors.Get("bad")
 		print(fmt.Sprintf("%s%s\033[0m", clr, err.Error()))
-	}
-
-	getFullPricing := func(uuid mtgjson.UUID, fetch, forceFetch, wait bool) Pricing {
-		p := Pricing{T: time.Now()}
-		c, ok := cards.ByUUID(uuid)
-		if !ok || c.Identifiers.ScryfallId == "" {
-			return p
-		}
-		id := c.Identifiers.ScryfallId
-		check := func() (Pricing, bool) {
-			v, ok := pricing[uuid]
-			if ok {
-				pv := pricingValue(v, false)
-				if pv != 0 && time.Since(v.T) < scryfall.PricingOutdated {
-					return v, true
-				}
-				if pv == 0 && time.Since(v.T) < time.Minute*5 {
-					return v, true
-				}
-			}
-			return v, false
-		}
-
-		if !forceFetch {
-			pricingMutex.RLock()
-			v, ok := check()
-			pricingMutex.RUnlock()
-			if ok {
-				return v
-			}
-
-			if !fetch {
-				return v
-			}
-		}
-
-		w := make(chan struct{}, 1)
-		go func() {
-			defer func() { w <- struct{}{} }()
-
-			fetch := func() bool {
-				pricingMutex.Lock()
-				defer pricingMutex.Unlock()
-				if _, ok := pricingBusy[uuid]; ok {
-					return false
-				}
-				if _, ok := check(); ok {
-					return false
-				}
-				pricingBusy[uuid] = struct{}{}
-				return true
-			}()
-
-			if !fetch {
-				return
-			}
-
-			res, err := scry.CardDeferred(id)
-			pricingMutex.Lock()
-			defer pricingMutex.Unlock()
-			delete(pricingBusy, uuid)
-			if err != nil {
-				fmt.Fprintln(os.Stderr, err)
-				pricing[uuid] = p
-				return
-			}
-
-			p.EUR = res.EUR()
-			p.USD = res.USD()
-			p.EURFoil = res.EURFoil()
-			p.USDFoil = res.USDFoil()
-
-			pricing[uuid] = p
-		}()
-		if wait {
-			<-w
-		}
-
-		return p
-	}
-
-	getPricing := func(uuid mtgjson.UUID, foil, fetch bool) (float64, bool) {
-		p := getFullPricing(uuid, fetch, false, false)
-		v := pricingValue(p, foil)
-		return v, v != 0 && time.Since(p.T) <= scryfall.PricingOutdated
 	}
 
 	flush := func() {
 		fmt.Print("\033[2J\033[0;0H")
-		output[0] = state.StringShort(colors, getPricing) + "\n"
+		output[0] = state.StringShort(app) + "\n"
 		fmt.Print(strings.Join(output, "\n"))
 		output = make([]string, 1, 30)
 	}
@@ -731,8 +772,8 @@ ignored if -ia is passed. {fn} is replaced by the filename and {pid} with the pr
 	lastImageListID := ""
 	printSets := func(filter string) {
 		filter = strings.ToLower(filter)
-		list := make([]string, 0, len(cards.Sets))
-		for k, v := range cards.Sets {
+		list := make([]string, 0, len(app.Cards.Sets))
+		for k, v := range app.Cards.Sets {
 			v := fmt.Sprintf("%s: %s", k, v)
 			if filter != "" && !strings.Contains(strings.ToLower(v), filter) {
 				continue
@@ -769,13 +810,13 @@ ignored if -ia is passed. {fn} is replaced by the filename and {pid} with the pr
 			}
 		}
 		if state.Mode == ModeCollection {
-			state.SortLocal(db, getPricing)
-			print(localCardsString(db, state.Local, max, getPricing, colors, true)...)
+			state.SortLocal(app)
+			print(app.LocalCardsString(state.Local, max, true)...)
 			printSkipped(len(state.Local), max)
 			return
 		}
-		state.SortOptions(db, getPricing)
-		print(cardsString(db, state.Options, max, getPricing, colors, true)...)
+		state.SortOptions(app)
+		print(app.CardsString(state.Options, max, true)...)
 		printSkipped(len(state.Options), max)
 	}
 
@@ -794,7 +835,7 @@ ignored if -ia is passed. {fn} is replaced by the filename and {pid} with the pr
 		})
 
 		for i := range cards {
-			getPricing(cards[i].UUID, false, !noPricing)
+			app.GetPricing(cards[i].UUID, false, !noPricing)
 			times := 1
 			cut := len(lastAdded)
 			for j := len(lastAdded) - 1; j >= 0; j-- {
@@ -869,7 +910,7 @@ ignored if -ia is passed. {fn} is replaced by the filename and {pid} with the pr
 		}
 
 		if len(list) == 0 {
-			for _, c := range cards.Cards {
+			for _, c := range app.Cards.Cards {
 				if err := add(c); err != nil {
 					return match, err
 				}
@@ -889,7 +930,7 @@ ignored if -ia is passed. {fn} is replaced by the filename and {pid} with the pr
 			return nil
 		}
 		for _, s := range queue[1:] {
-			str := s.String(db, colors, getPricing)
+			str := s.String(app)
 			if len(str) == 0 {
 				continue
 			}
@@ -907,7 +948,7 @@ ignored if -ia is passed. {fn} is replaced by the filename and {pid} with the pr
 		}
 		if state.Changes() {
 			warnedUnsaved = true
-			print(state.String(db, colors, getPricing)...)
+			print(state.String(app)...)
 			printErr(errors.New("You have unsaved changes, type /exit again to quit anyway"))
 			return true
 		}
@@ -973,7 +1014,6 @@ ignored if -ia is passed. {fn} is replaced by the filename and {pid} with the pr
 		"reset": func([]string) error {
 			state.Query = nil
 			state.Filtered = false
-			//printOptions()
 			return nil
 		},
 		"update": func([]string) error {
@@ -998,24 +1038,24 @@ ignored if -ia is passed. {fn} is replaced by the filename and {pid} with the pr
 			}
 
 			for _, c := range selection {
-				dbCard := FromCard(db, c.Card)
+				dbCard := FromCard(app.DB, c.Card)
 				dbCard.Tag(c.Tags.Slice())
-				db.Add(dbCard)
+				app.DB.Add(dbCard)
 			}
 
 			for _, c := range deletes {
-				db.Delete(c.DBCard)
+				app.DB.Delete(c.DBCard)
 			}
 
-			for _, c := range db.Cards() {
-				c.SetPricing(getFullPricing(c.UUID(), false, false, false))
+			for _, c := range app.DB.Cards() {
+				c.SetPricing(app.GetFullPricing(c.UUID(), false, false, false))
 			}
 
 			for _, t := range tags {
 				t.Commit()
 			}
 
-			saved, err := db.Save(dbFile)
+			saved, err := app.DB.Save(dbFile)
 			if err != nil {
 				return err
 			}
@@ -1104,7 +1144,7 @@ ignored if -ia is passed. {fn} is replaced by the filename and {pid} with the pr
 			}
 
 			data := make([]string, 6, 10)
-			data[0] = fmt.Sprintf("%s: %s", card.SetCode, cards.Sets[card.SetCode])
+			data[0] = fmt.Sprintf("%s: %s", card.SetCode, app.Cards.Sets[card.SetCode])
 			var pt string
 			if card.Power != "" && card.Toughness != "" {
 				pt = fmt.Sprintf("%2s/%-2s", card.Power, card.Toughness)
@@ -1203,7 +1243,7 @@ ignored if -ia is passed. {fn} is replaced by the filename and {pid} with the pr
 				return nil
 			}
 			fs := mtgjson.SetID(strings.ToUpper(arg))
-			if _, ok := cards.Sets[fs]; !ok {
+			if _, ok := app.Cards.Sets[fs]; !ok {
 				printSets("")
 				return fmt.Errorf("invalid set id: '%s'", arg)
 			}
@@ -1257,7 +1297,7 @@ ignored if -ia is passed. {fn} is replaced by the filename and {pid} with the pr
 			}
 
 			for _, c := range state.Local {
-				getPricing(c.UUID(), c.Foil(), true)
+				app.GetPricing(c.UUID(), c.Foil(), true)
 			}
 
 			return nil
@@ -1271,9 +1311,9 @@ ignored if -ia is passed. {fn} is replaced by the filename and {pid} with the pr
 				return err
 			}
 
-			o := getFullPricing(card.UUID, false, false, true)
-			n := getFullPricing(card.UUID, true, true, true)
-			_, ok := getPricing(card.UUID, false, false)
+			o := app.GetFullPricing(card.UUID, false, false, true)
+			n := app.GetFullPricing(card.UUID, true, true, true)
+			_, ok := app.GetPricing(card.UUID, false, false)
 			if !ok {
 				return errors.New("failed to fetch price")
 			}
@@ -1400,10 +1440,10 @@ ignored if -ia is passed. {fn} is replaced by the filename and {pid} with the pr
 
 		list := make([]Card, 0, len(res))
 		for _, ix := range res {
-			if state.FilterSet != "" && cards.Cards[ix].SetCode != state.FilterSet {
+			if state.FilterSet != "" && app.Cards.Cards[ix].SetCode != state.FilterSet {
 				continue
 			}
-			list = append(list, cards.Cards[ix])
+			list = append(list, app.Cards.Cards[ix])
 		}
 
 		return list
@@ -1467,7 +1507,7 @@ ignored if -ia is passed. {fn} is replaced by the filename and {pid} with the pr
 
 		if qryStr == "" {
 			search = func() []int {
-				all := db.Cards()
+				all := app.DB.Cards()
 				list := make([]int, 0, len(all))
 				for i := range all {
 					list = append(list, i)
@@ -1494,7 +1534,7 @@ ignored if -ia is passed. {fn} is replaced by the filename and {pid} with the pr
 		res := search()
 		list := make([]LocalCard, 0, len(res))
 		for _, ix := range res {
-			c, ok := db.CardAt(ix)
+			c, ok := app.DB.CardAt(ix)
 			if !ok {
 				continue
 			}
@@ -1542,7 +1582,7 @@ ignored if -ia is passed. {fn} is replaced by the filename and {pid} with the pr
 			state.Filtered = line != ""
 			roptions := make([]Card, 0, len(options))
 			for _, c := range options {
-				rc, ok := cards.ByUUID(c.UUID())
+				rc, ok := app.Cards.ByUUID(c.UUID())
 				if ok {
 					roptions = append(roptions, rc)
 				}
@@ -1559,10 +1599,6 @@ ignored if -ia is passed. {fn} is replaced by the filename and {pid} with the pr
 
 		case ModeSearch:
 			state.Filtered = true
-			//if line == "" {
-			//	printOptions()
-			//	return
-			//}
 			if line != "" {
 				state.Query = append(state.Query, fields...)
 			}
@@ -1719,7 +1755,6 @@ ignored if -ia is passed. {fn} is replaced by the filename and {pid} with the pr
 	for {
 		select {
 		case <-cancelCh:
-			fmt.Fprintln(os.Stderr, 1)
 			modifyState(true, func(s State) State {
 				switch s.Mode {
 				case ModeSelect:

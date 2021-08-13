@@ -1,5 +1,7 @@
 package mtgjson
 
+import "strings"
+
 type SetID string
 type BorderColor string
 type Color string
@@ -20,6 +22,10 @@ func (a Availability) Paper() bool {
 	}
 
 	return false
+}
+
+func (k Keywords) String() string {
+	return strings.Join(k, " | ")
 }
 
 type LeadershipSkills struct {
