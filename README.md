@@ -12,7 +12,7 @@ outdated mandatory gif:
 
 or
 
-wait for a binary release
+[download](https://github.com/frizinak/gomtg/releases) a binary release
 
 ## Features
 
